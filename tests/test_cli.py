@@ -79,6 +79,62 @@ def test_status_dry_run_never_touches_usb(monkeypatch):
     assert rc == 0
 
 
+def test_status_without_probe_never_sends_tspl_status_query(monkeypatch, capsys):
+    """--status alone must only read the device ID (a USB control request) --
+    never the TSPL status query, which is outside SUPPORTED_COMMANDS and
+    whose effect on a following job is unverified on hardware."""
+
+    class DeviceIdOnlyPrinter:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def device_id(self):
+            return "MFG:Munbyn;CMD:TSPL;MDL:RW403B;CMT:Label Printer;"
+
+        def query_status(self):
+            raise AssertionError("--status without --probe must not call query_status()")
+
+        def write(self, *a, **k):
+            raise AssertionError("--status must never write to the printer")
+
+    monkeypatch.setattr(usb_transport, "Printer", DeviceIdOnlyPrinter)
+    rc = print_label.main(["--status"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "not queried" in out
+    assert "--probe" in out
+
+
+def test_status_probe_sends_tspl_status_query(monkeypatch, capsys):
+    class ProbePrinter:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def device_id(self):
+            return "MFG:Munbyn;CMD:TSPL;MDL:RW403B;CMT:Label Printer;"
+
+        def query_status(self):
+            return None
+
+    monkeypatch.setattr(usb_transport, "Printer", ProbePrinter)
+    rc = print_label.main(["--status", "--probe"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no reply" in out
+
+
 def test_calibrate_dry_run_never_touches_usb(monkeypatch):
     monkeypatch.setattr(usb_transport, "Printer", _refuse_usb)
     rc = print_label.main(["--calibrate", "--test"])

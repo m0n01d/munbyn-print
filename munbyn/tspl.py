@@ -1,9 +1,23 @@
 """Build TSPL (TSC Printer Language) jobs for the Munbyn RW403B.
 
 The printer's own IEEE-1284 device ID reports ``CMD:TSPL`` (confirmed on
-hardware) -- this is the older "TSPL" dialect, not "TSPL2". Per the TSC
-programming manual, TSPL2-only features (scalable font "0"/ROMAN.TTF) are
-NOT assumed to work here; only the manual's fixed dot-matrix fonts are used.
+hardware) -- this is the older "TSPL" dialect, not "TSPL2". No native TSPL
+font (fixed dot-matrix or the TSPL2-only scalable "0"/ROMAN.TTF) is emitted
+by this module at all any more: every job builder here draws all text as
+pixels with Pillow and ships it as one ``BITMAP`` (see ``selftest_image``),
+since native ``TEXT`` was verified on hardware to print nothing -- see
+below.
+
+**Verified on hardware (2026-09-27, real RW403B, real 4x6 gap labels):** a
+job built from exactly ``SUPPORTED_COMMANDS`` below -- header, ``CLS``, one
+``BITMAP`` (mode 1), ``PRINT`` -- printed correctly with the right polarity.
+A second job using the *same* header plus native ``TEXT``/``BOX``/``BAR``
+commands printed **nothing at all** (no feed). Conclusion: this firmware's
+USB path only implements the vendor filter's own command subset; anything
+outside it is silently dropped, not merely unsupported-but-harmless. Every
+job builder in this module is therefore restricted to
+``SUPPORTED_COMMANDS``, and ``GAPDETECT`` (tested alone: also ignored) is
+never sent either -- see ``calibrate_instructions()``.
 
 Two details in this module are configurable specifically because research
 could not pin them down with certainty for THIS printer/firmware, and are
@@ -11,24 +25,22 @@ meant to be confirmed from a real test print rather than trusted blindly:
 
 * ``JobSettings.bitmap_black_is_one`` -- bit polarity of ``BITMAP`` data.
   The default is ``False`` (a CLEAR bit prints a black dot, a set bit is
-  white), which is the TSC/EPL convention used by independent working TSPL
-  implementations (an open-source TSPL CUPS driver and a hand-written TSPL
-  image encoder both clear a bit to print a dot). Munbyn's web editor treats
-  1 as black, but that code builds protobuf messages for the Bluetooth path,
-  not TSPL, so it says nothing about how the TSPL ``BITMAP`` interpreter
-  reads bits. The self-test label's polarity swatch settles it on paper;
-  ``--black-is-one 1`` (or the config key) flips it.
+  white) -- **confirmed on hardware** 2026-09-27 against a real 4x6 label.
 * The vendor's own (broken, x86-only) CUPS filter's extracted strings show
   every ``SIZE``/``GAP``/``BLINE``/``OFFSET`` line formatted with a plain
   ``%d`` (integer mm), not decimals -- even though the TSC manual's own
   examples use decimal mm elsewhere. ``header()`` follows the vendor's own
-  template literally (round to the nearest whole mm).
+  template literally (round to the nearest whole mm), and is byte-identical
+  to the verified working job for the default settings.
 
 ``BITMAP`` always uses mode 1 (OR), the raw-bitmap template in the vendor
-filter. The vendor's compressed mode 3 has no public spec and is not used.
+filter. The vendor's compressed mode 3 (``BITMAP x,y,wb,h,3,len,<data>``,
+links libz) and ``SETC PAUSEKEY OFF`` both exist in the vendor filter binary
+but are untested here and are never used.
 """
 from __future__ import annotations
 
+import datetime
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -56,10 +68,47 @@ class JobSettings:
     bitmap_black_is_one: bool = False  # see module docstring
 
 
+#: The complete set of TSPL commands this firmware's USB path was verified to
+#: honour (2026-09-27, real hardware). Everything this module builds
+#: (``build_job``, ``selftest_job``, ``feed_job``) is restricted to exactly
+#: this set -- notably no ``TEXT``/``BOX``/``BAR`` (verified to print
+#: nothing, not even a feed) and no ``GAPDETECT`` (verified to be ignored).
+#: ``SETC AUTODOTTED OFF`` is listed as a full line since ``SETC`` alone
+#: covers other, untested sub-commands (e.g. ``SETC PAUSEKEY OFF``) that must
+#: not be sent.
+SUPPORTED_COMMANDS: Tuple[str, ...] = (
+    "SIZE",
+    "GAP",
+    "BLINE",
+    "REFERENCE",
+    "OFFSET",
+    "SETC AUTODOTTED OFF",
+    "DENSITY",
+    "SPEED",
+    "DIRECTION",
+    "CLS",
+    "BITMAP",
+    "PRINT",
+)
+
+
 def header(s: JobSettings) -> bytes:
-    """Build the SIZE..DIRECTION preamble, mirroring the vendor's job sequence."""
+    """Build the SIZE..DIRECTION preamble, mirroring the vendor's job sequence.
+
+    Byte-identical (for default settings) to the job verified on real
+    hardware 2026-09-27 -- do not add ``SETC PAUSEKEY OFF`` or anything else
+    here without a fresh hardware verification.
+    """
     if s.media not in ("gap", "bline", "continuous"):
         raise ValueError("media must be gap, bline or continuous, not {!r}".format(s.media))
+    if not 0 <= s.density <= 15:
+        raise ValueError("density must be 0..15, not {!r}".format(s.density))
+    if not 1 <= s.speed <= 8:
+        raise ValueError("speed must be 1..8, not {!r}".format(s.speed))
+    if s.direction not in (0, 1):
+        raise ValueError("direction must be 0 or 1, not {!r}".format(s.direction))
+    if s.gap_mm < 0 or s.gap_offset_mm < 0 or s.offset_mm < 0:
+        raise ValueError("gap, gap offset and offset must be >= 0")
     lines = [
         "SIZE {} mm,{} mm".format(round(s.size.width_mm), round(s.size.height_mm)),
     ]
@@ -148,7 +197,10 @@ def build_job(s: JobSettings, pages: List[Image.Image]) -> bytes:
     return b"".join(parts)
 
 
-# Fixed-pitch TSPL dot fonts: name -> (cell width, cell height) in dots.
+# Fixed-pitch TSPL dot fonts: name -> (cell width, cell height) in dots. Kept
+# only so ``simulate()`` can approximate a foreign job's native TEXT command
+# (e.g. one hand-built in a test); nothing in this module emits TEXT anymore
+# -- see the module docstring.
 _DOT_FONTS = {
     "1": (8, 12),
     "2": (12, 20),
@@ -159,158 +211,254 @@ _DOT_FONTS = {
     "7": (21, 27),
     "8": (14, 25),
 }
-_SELFTEST_FONTS = ("4", "3", "2", "1")  # largest first
 
 
 def _rects_overlap(a, b) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-def _text_cmd(x: int, y: int, font: str, content: str) -> bytes:
-    safe = content.replace('"', "'")
-    return 'TEXT {},{},"{}",0,1,1,"{}"\r\n'.format(x, y, font, safe).encode("ascii")
+def _font(size_px: int):
+    """Load a legible TrueType font at ``size_px`` pixels.
+
+    Pillow >= 10.1 ships a scalable default font that
+    ``ImageFont.load_default(size=...)`` can render at any size; older
+    Pillow raises ``TypeError`` on the ``size`` kwarg, so fall back to
+    macOS's own Helvetica, and to the bare (small, fixed-size) default as a
+    last resort so this never raises.
+    """
+    try:
+        return ImageFont.load_default(size=max(1, int(size_px)))
+    except TypeError:
+        pass
+    except Exception:  # pragma: no cover - defensive
+        pass
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(1, int(size_px)))
+    except Exception:
+        return ImageFont.load_default()
 
 
-def selftest_job(s: JobSettings) -> bytes:
-    """Build a built-in alignment/polarity self-test label.
+def _text_wh(draw: "ImageDraw.ImageDraw", text: str, font) -> Tuple[int, int]:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    Draws a border box (inset 1 mm), mm rulers along the top and left edges
-    (5 mm ticks, 10 mm ticks longer), a center crosshair, identifying TEXT
-    lines, and a BITMAP-drawn polarity swatch (left half black / right half
-    white, thin black outline). BOX/BAR/TEXT are drawn by the printer; only
-    the swatch goes through ``BITMAP``, so a wrong polarity shows up as a
-    swatch whose RIGHT half is black. Parts that would not fit a small label
-    are shrunk or skipped rather than overflowing.
+
+def selftest_image(s: JobSettings) -> Image.Image:
+    """Draw the self-test label as a single plain (mode "1") image.
+
+    This firmware silently drops every native TSPL ``TEXT``/``BOX``/``BAR``
+    command (verified on hardware 2026-09-27 -- a job using them printed
+    nothing at all), so the self-test's border, mm rulers, crosshair and
+    identifying text are all drawn as pixels with Pillow and shipped as one
+    ``BITMAP``, exactly like ``build_job`` does for a rendered page.
+
+    Draws: a border inset 1 mm; ruler ticks every 5 mm along the top and
+    left edges (10 mm ticks drawn longer); a center crosshair; identifying
+    text (model, label size in mm/in, density/speed, the configured bitmap
+    polarity, and today's date); and a polarity swatch captioned "LEFT HALF
+    SHOULD BE BLACK". If ``bitmap_black_is_one`` doesn't match this
+    firmware's real ``BITMAP`` bit convention, the *whole* label inverts
+    (not just the swatch) -- an even more obvious tell than the old
+    TEXT/BOX-based self-test could give. Elements that don't fit a small
+    label are shrunk or skipped rather than overflowing it.
     """
     mm = mm_to_dots
-    width_dots = s.size.width_dots
-    height_dots = s.size.height_dots
-    width_mm = s.size.width_mm
-    height_mm = s.size.height_mm
-    inset = mm(1.0)
-    line = 2  # dots; 1-dot lines are faint on thermal paper
+    width = max(1, s.size.width_dots)
+    height = max(1, s.size.height_dots)
+    width_mm, height_mm = s.size.width_mm, s.size.height_mm
 
-    out: List[bytes] = [header(s), b"CLS\r\n"]
+    img = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(img)
+    # Draw text 1-bit (no anti-aliasing). Anti-aliased glyphs at small pixel
+    # sizes leave isolated low-coverage pixels (e.g. the gap between an "i"'s
+    # dot and stem) that the final mode "1" conversion's 128 threshold fuses
+    # into solid ink, making small text illegible (found by review: "MUNBYN"
+    # read as "MUNEYN", "density" as "densIty"). Drawing without
+    # anti-aliasing keeps every glyph pixel fully black or fully white, so
+    # thresholding can't fuse anything.
+    draw.fontmode = "1"
 
     # Border.
+    inset = mm(1.0)
+    border_w = max(1, mm(0.3))
     bx0, by0 = inset, inset
-    bx1 = max(bx0 + 1, width_dots - 1 - inset)
-    by1 = max(by0 + 1, height_dots - 1 - inset)
-    out.append("BOX {},{},{},{},{}\r\n".format(bx0, by0, bx1, by1, line + 1).encode("ascii"))
+    bx1 = max(bx0 + 1, width - 1 - inset)
+    by1 = max(by0 + 1, height - 1 - inset)
+    draw.rectangle([bx0, by0, bx1, by1], outline=0, width=border_w)
 
     # Rulers: ticks measured from the label's own left/top edge.
+    tick_w = max(1, mm(0.25))
     short_tick, long_tick = mm(1.5), mm(3.0)
     k = 1
     while k * 5 < width_mm - 1:
-        x = mm(k * 5)
+        x = mm(k * 5.0)
         length = long_tick if k % 2 == 0 else short_tick
-        out.append("BAR {},{},{},{}\r\n".format(x, by0, line, length).encode("ascii"))
+        draw.rectangle([x, by0, x + tick_w - 1, by0 + length - 1], fill=0)
         k += 1
     k = 1
     while k * 5 < height_mm - 1:
-        y = mm(k * 5)
+        y = mm(k * 5.0)
         length = long_tick if k % 2 == 0 else short_tick
-        out.append("BAR {},{},{},{}\r\n".format(bx0, y, length, line).encode("ascii"))
+        draw.rectangle([bx0, y, bx0 + length - 1, y + tick_w - 1], fill=0)
         k += 1
 
     # Content area: clear of the rulers on the top/left.
     cx0, cy0 = mm(5.0), mm(5.0)
-    cx1, cy1 = width_dots - mm(2.0), height_dots - mm(2.0)
+    cx1 = max(cx0 + 1, width - mm(2.0))
+    cy1 = max(cy0 + 1, height - mm(2.0))
     cw, ch = cx1 - cx0, cy1 - cy0
-    occupied = []  # rects (x0, y0, x1, y1) the crosshair must avoid
+    occupied: List[Tuple[int, int, int, int]] = []  # rects the crosshair must avoid
 
     # Polarity swatch (bottom, centered) + caption above it.
     text_bottom = cy1
-    swatch_cmds: List[bytes] = []
     sw = min(mm(30.0), cw)
-    sh = min(mm(12.0), ch * 45 // 100)
+    sh = min(mm(12.0), (ch * 45) // 100)
     if sw >= mm(12.0) and sh >= mm(5.0):
-        swatch = Image.new("1", (sw, sh), 255)
-        draw = ImageDraw.Draw(swatch)
-        draw.rectangle([0, 0, sw // 2 - 1, sh - 1], fill=0)
-        draw.rectangle([0, 0, sw - 1, sh - 1], outline=0, width=max(2, mm(0.3)))
-        sx = max(cx0, (width_dots - sw) // 2)
+        sx = max(cx0, (width - sw) // 2)
         sy = cy1 - sh
-        swatch_cmds.append(bitmap_command(sx, sy, swatch, s.bitmap_black_is_one))
+        draw.rectangle([sx, sy, sx + sw - 1, sy + sh - 1], fill=255)
+        draw.rectangle([sx, sy, sx + sw // 2 - 1, sy + sh - 1], fill=0)
+        draw.rectangle([sx, sy, sx + sw - 1, sy + sh - 1], outline=0, width=max(2, mm(0.3)))
         occupied.append((sx, sy, sx + sw, sy + sh))
         text_bottom = sy - mm(1.0)
 
-        fw, fh = _DOT_FONTS["1"]
         for caption in ("LEFT HALF SHOULD BE BLACK", "LEFT=BLACK"):
-            if len(caption) * fw <= cw:
-                cap_x = max(cx0, (width_dots - len(caption) * fw) // 2)
-                cap_y = sy - mm(1.0) - fh
+            font_px = max(6, mm(2.2))
+            font = _font(font_px)
+            tw, th = _text_wh(draw, caption, font)
+            while tw > cw and font_px > 6:
+                font_px -= 1
+                font = _font(font_px)
+                tw, th = _text_wh(draw, caption, font)
+            if tw <= cw:
+                cap_x = max(cx0, (width - tw) // 2)
+                cap_y = sy - mm(1.0) - th
                 if cap_y >= cy0:
-                    swatch_cmds.append(_text_cmd(cap_x, cap_y, "1", caption))
-                    occupied.append((cap_x, cap_y, cap_x + len(caption) * fw, cap_y + fh))
+                    draw.text((cap_x, cap_y), caption, fill=0, font=font)
+                    occupied.append((cap_x, cap_y, cap_x + tw, cap_y + th))
                     text_bottom = cap_y - mm(1.0)
                 break
 
     # Identifying text, most important first.
     text_lines = [
         "MUNBYN RW403B TEST",
-        "polarity: black_is_one={}".format(int(s.bitmap_black_is_one)),
         "{:.1f}x{:.1f}mm ({:.2f}x{:.2f}in)".format(
             width_mm, height_mm, width_mm / 25.4, height_mm / 25.4
         ),
         "density={} speed={}".format(s.density, s.speed),
+        "polarity: black_is_one={}".format(int(s.bitmap_black_is_one)),
+        datetime.date.today().isoformat(),
     ]
     text_h = max(0, text_bottom - cy0)
-    chosen = None
-    for font in _SELFTEST_FONTS:
-        fw, fh = _DOT_FONTS[font]
-        pitch = fh + max(4, fh // 4)
-        widest = max(len(t) for t in text_lines) * fw
-        if widest <= cw and (text_h + (pitch - fh)) // pitch >= len(text_lines):
-            chosen = (font, fw, fh, pitch, text_lines)
+    font_px = max(6, mm(3.0))
+    font = _font(font_px)
+    while font_px > 6:
+        widest = max(_text_wh(draw, t, font)[0] for t in text_lines)
+        _, lh = _text_wh(draw, "Xgy", font)
+        pitch = lh + max(2, lh // 4)
+        if widest <= cw and pitch * len(text_lines) <= text_h:
             break
-    if chosen is None:
-        fw, fh = _DOT_FONTS["1"]
-        pitch = fh + 4
-        n = (text_h + 4) // pitch
-        max_chars = cw // fw
-        shown = [t[:max_chars] for t in text_lines[:n]] if max_chars > 0 else []
-        chosen = ("1", fw, fh, pitch, shown)
-    font, fw, fh, pitch, shown = chosen
+        font_px -= 1
+        font = _font(font_px)
+    _, lh = _text_wh(draw, "Xgy", font)
+    pitch = lh + max(2, lh // 4)
+    max_lines = (text_h // pitch) if pitch > 0 else 0
+    shown = text_lines[: max(0, min(len(text_lines), max_lines))]
     for i, content in enumerate(shown):
         y = cy0 + i * pitch
-        out.append(_text_cmd(cx0, y, font, content))
+        draw.text((cx0, y), content, fill=0, font=font)
     if shown:
-        widest = max(len(t) for t in shown) * fw
-        occupied.append((cx0, cy0, cx0 + widest, cy0 + (len(shown) - 1) * pitch + fh))
+        widest_shown = max(_text_wh(draw, t, font)[0] for t in shown)
+        occupied.append((cx0, cy0, cx0 + widest_shown, cy0 + (len(shown) - 1) * pitch + lh))
 
     # Center crosshair, unless it would collide with text or the swatch.
-    mx, my = width_dots // 2, height_dots // 2
+    mx, my = width // 2, height // 2
     arm = min(mm(5.0), cw // 4, ch // 4)
     if arm >= mm(1.5):
-        cross = (mx - arm, my - arm, mx + arm + line, my + arm + line)
+        cross_w = max(1, mm(0.3))
+        cross = (mx - arm, my - arm, mx + arm + cross_w, my + arm + cross_w)
         if not any(_rects_overlap(cross, r) for r in occupied):
-            out.append("BAR {},{},{},{}\r\n".format(mx - arm, my, 2 * arm + line, line).encode("ascii"))
-            out.append("BAR {},{},{},{}\r\n".format(mx, my - arm, line, 2 * arm + line).encode("ascii"))
+            draw.rectangle([mx - arm, my, mx + arm + cross_w - 1, my + cross_w - 1], fill=0)
+            draw.rectangle([mx, my - arm, mx + cross_w - 1, my + arm + cross_w - 1], fill=0)
 
-    out.extend(swatch_cmds)
-    out.append(b"PRINT 1,1\r\n")
-    return b"".join(out)
+    return img.convert("1", dither=Image.Dither.NONE)
 
 
-def calibrate_job() -> bytes:
-    """Gap auto-detect: feeds a few labels while the sensor learns spacing.
+def selftest_job(s: JobSettings) -> bytes:
+    """Build the built-in alignment/polarity self-test as a pure BITMAP job:
+    header, ``CLS``, one ``BITMAP`` for the whole label (see
+    ``selftest_image``), ``PRINT``. Only commands in ``SUPPORTED_COMMANDS``
+    are ever emitted.
 
-    Uses ``GAPDETECT`` (gap-sensor specific) since ``gap`` is our default
-    media type. For black-mark stock, ``BLINEDETECT`` would be the
-    equivalent, and ``AUTODETECT`` lets the printer pick the sensor itself
-    (manual: don't also send GAP/BLINE when using AUTODETECT).
+    Honours ``x_shift_mm``/``y_shift_mm`` (like ``build_job``, via
+    ``_shift_and_bitmap``) and ``copies``, so nudging alignment against the
+    self-test and then ``--save-defaults`` actually changes what gets
+    printed -- see the README's calibration steps. ``--preview``/the web
+    UI's self-test preview shows ``selftest_image()`` directly, which is
+    unshifted (the full label canvas), the same way a rendered page's own
+    preview doesn't reflect its shift either.
     """
-    return b"GAPDETECT\r\n"
+    img = selftest_image(s)
+    return (
+        header(s)
+        + b"CLS\r\n"
+        + _shift_and_bitmap(s, img)
+        + "PRINT 1,{}\r\n".format(s.copies).encode("ascii")
+    )
 
 
-def feed_job() -> bytes:
-    """Feed one label."""
-    return b"FORMFEED\r\n"
+#: Manual calibration procedure (RW403B manual, item 4). There is no TSPL
+#: command this firmware honours for calibration: ``GAPDETECT`` alone was
+#: sent to real hardware 2026-09-27 and verified to do nothing at all.
+#: ``calibrate_instructions()`` never builds or sends a job.
+CALIBRATION_INSTRUCTIONS = """\
+Nothing is sent to the printer for calibration -- it's a manual, physical
+procedure. (TSPL's GAPDETECT was tried alone on real hardware and verified
+to do nothing; this firmware's USB path does not implement it.)
+
+To calibrate label gap/length detection:
+  1. Load at least 4 labels into the printer.
+  2. Close the cover -- this triggers automatic label identification.
+  3. If that doesn't work, hold the FEED button until the printer beeps
+     ONCE (label identification).
+
+Feed-button reference (RW403B manual):
+  * Single click                        -- feed one label
+  * Hold to ONE beep                    -- label identification (calibrate)
+  * Double-click, or hold to TWO beeps  -- printer self-test page
+  * Hold to THREE beeps (~6s)           -- reset
+
+LED reference:
+  * green               -- ready
+  * blue                -- Bluetooth connected
+  * red                 -- label not identified, or cover open
+  * flashing green+red  -- print head overheated
+"""
+
+
+def calibrate_instructions() -> str:
+    """Return the manual gap/label calibration procedure. Never touches
+    the printer -- see ``CALIBRATION_INSTRUCTIONS``."""
+    return CALIBRATION_INSTRUCTIONS
+
+
+def feed_job(s: JobSettings) -> bytes:
+    """Feed one label by printing a blank one: header + ``CLS`` + ``PRINT
+    1,1``. There is no dedicated feed command in this firmware's verified
+    command subset (``FORMFEED`` is not in ``SUPPORTED_COMMANDS`` and has
+    not been tested against real hardware, so it is never sent)."""
+    return header(s) + b"CLS\r\n" + b"PRINT 1,1\r\n"
 
 
 #: Status Polling command (<ESC>!?), works over RS-232/USB/Ethernet per the
-#: TSC manual. Returns exactly one status byte.
+#: TSC manual. Returns exactly one status byte. **Verified on hardware
+#: 2026-09-27: this firmware does not reply** (no bytes on bulk IN, 500ms
+#: timeout). It is 3 bytes with no CR/LF terminator, and it is NOT in
+#: ``SUPPORTED_COMMANDS`` -- whether those unterminated bytes are safe to
+#: send right before the next job's ``SIZE`` line has never been verified on
+#: hardware, so nothing in this repo sends it automatically any more: the
+#: web UI never sends it, and the CLI only does with an explicit
+#: ``--status --probe`` (see ``Printer.query_status`` / ``CLAUDE.md``).
 STATUS_QUERY = b"\x1b!?"
 
 _STATUS_BITS = (
@@ -377,13 +525,6 @@ def describe(job: bytes, preview_bytes: int = 32) -> str:
     return "\n".join(out_lines)
 
 
-def _font(size_px: int):
-    try:
-        return ImageFont.load_default(size=size_px)
-    except TypeError:  # pragma: no cover - Pillow < 10.1
-        return ImageFont.load_default()
-
-
 def simulate(
     job: bytes, width_dots: int, height_dots: int, black_is_one: Optional[bool] = None
 ) -> List[Image.Image]:
@@ -392,7 +533,12 @@ def simulate(
     Handles CLS, BOX, BAR, TEXT (drawn with a stand-in font on the TSPL
     font's cell grid, so layout is right even though glyphs differ) and
     BITMAP (decoded with ``black_is_one``, default: ``JobSettings``'s
-    default polarity). Anything else is ignored. Used for ``--preview`` of the self-test and to check jobs.
+    default polarity). Anything else is ignored. BOX/BAR/TEXT decoding is
+    kept for generality (this can decode any TSPL job, not just ones this
+    module builds) even though nothing here emits them anymore -- see the
+    module docstring. Used to check jobs and for direct pixel comparisons in
+    tests; ``--preview``/the web UI use ``selftest_image()`` directly for an
+    exact (not approximated) self-test preview.
     """
     if black_is_one is None:
         black_is_one = JobSettings.bitmap_black_is_one

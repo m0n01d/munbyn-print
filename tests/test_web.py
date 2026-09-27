@@ -53,7 +53,7 @@ def test_index_ok(client):
 
 def test_status_dry_run_never_touches_usb(client, monkeypatch):
     monkeypatch.setattr(usb_transport, "Printer", _refuse_usb)
-    resp = client.get("/api/status")
+    resp = client.get("/api/status", headers=_headers())
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["dry_run"] is True
@@ -69,11 +69,21 @@ def test_status_reports_disconnected_when_printer_not_found(monkeypatch):
             raise usb_transport.PrinterNotFound("no printer")
 
     monkeypatch.setattr(usb_transport, "Printer", BoomPrinter)
-    resp = client.get("/api/status")
+    resp = client.get("/api/status", headers=_headers())
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["connected"] is False
     assert data["dry_run"] is False
+
+
+def test_status_requires_munbyn_header(client):
+    resp = client.get("/api/status")
+    assert resp.status_code == 403
+
+
+def test_status_rejects_foreign_origin(client):
+    resp = client.get("/api/status", headers=_headers(origin="http://evil.example"))
+    assert resp.status_code == 403
 
 
 def test_preview_requires_munbyn_header(client, sample_png_bytes):
@@ -185,6 +195,130 @@ def test_print_reports_printer_not_found(sample_png_bytes, monkeypatch):
     )
     assert resp.status_code == 503
     assert resp.get_json()["ok"] is False
+
+
+def test_selftest_requires_munbyn_header(client):
+    resp = client.post("/api/selftest", data={"size": "4x6"}, content_type="multipart/form-data")
+    assert resp.status_code == 403
+
+
+def test_selftest_rejects_foreign_origin(client):
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "4x6"},
+        content_type="multipart/form-data",
+        headers=_headers(origin="http://evil.example"),
+    )
+    assert resp.status_code == 403
+
+
+def test_selftest_preview_returns_one_page(client):
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "4x6", "preview": "1"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert len(data["pages"]) == 1
+    assert data["pages"][0].startswith("data:image/png;base64,")
+    assert data["width_dots"] > 0 and data["height_dots"] > 0
+
+
+def test_selftest_bad_size_is_400(client):
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "not-a-size"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_selftest_dry_run_describes_job(client):
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "4x6"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["dry_run"] is True
+    assert "SIZE" in data["describe"]
+    assert "BITMAP" in data["describe"]
+
+
+def test_selftest_writes_to_mocked_printer_when_not_test_mode(monkeypatch):
+    app = web.create_app(test_mode=False)
+    client = app.test_client()
+    written = {}
+
+    class FakePrinter:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def write(self, data, chunk_size=4096):
+            written["data"] = data
+            return len(data)
+
+    monkeypatch.setattr(usb_transport, "Printer", FakePrinter)
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "4x6"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["bytes"] > 0
+    assert written["data"]
+
+
+def test_status_never_sends_the_tspl_status_query(monkeypatch):
+    """/api/status must report device ID + USB presence only -- it must never
+    write the TSPL status query (ESC !?), which is outside SUPPORTED_COMMANDS
+    and whose effect on a following job has never been verified on hardware
+    (see CLAUDE.md)."""
+    app = web.create_app(test_mode=False)
+    client = app.test_client()
+
+    class ProbedPrinter:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def device_id(self):
+            return "MFG:Munbyn;CMD:TSPL;MDL:RW403B;CMT:Label Printer;"
+
+        def query_status(self):
+            raise AssertionError("api_status must never call query_status()")
+
+        def write(self, *a, **k):
+            raise AssertionError("api_status must never call write()")
+
+    monkeypatch.setattr(usb_transport, "Printer", ProbedPrinter)
+    resp = client.get("/api/status", headers=_headers())
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["connected"] is True
+    assert data["device_id"]
+    assert data["status"] is None
 
 
 def test_oversize_upload_returns_413(client):

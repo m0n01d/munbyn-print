@@ -87,9 +87,20 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Bitmap polarity override.")
 
     p.add_argument("--selftest", action="store_true", help="Print the built-in alignment/polarity test label.")
-    p.add_argument("--calibrate", action="store_true", help="Send the gap/label auto-detect command.")
-    p.add_argument("--feed", action="store_true", help="Feed one label.")
-    p.add_argument("--status", action="store_true", help="Show device ID and decoded status byte.")
+    p.add_argument("--calibrate", action="store_true",
+                    help="Print the manual gap/label calibration procedure; sends nothing to the "
+                         "printer (this firmware ignores TSPL's GAPDETECT -- verified on hardware).")
+    p.add_argument("--feed", action="store_true",
+                    help="Feed one label (prints a blank one: header+CLS+PRINT -- this firmware has "
+                         "no dedicated feed command in its verified command subset).")
+    p.add_argument("--status", action="store_true",
+                    help="Show the device ID (a USB control request, not a TSPL command). "
+                         "Add --probe to also try the TSPL status query.")
+    p.add_argument("--probe", action="store_true",
+                    help="With --status, also send the raw TSPL status-query byte (ESC !?). "
+                         "This firmware is verified to never reply to it, and whether those "
+                         "unterminated bytes are safe to send right before another job is "
+                         "NOT verified -- off by default; see CLAUDE.md.")
     p.add_argument("--list", dest="list_printers", action="store_true", help="List attached printers.")
     p.add_argument("--serial", help="USB serial number, to select a specific printer.")
 
@@ -208,50 +219,52 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 def _cmd_status(args: argparse.Namespace) -> int:
     if args.test:
-        print("(dry run) --status would query the printer over USB; not touching USB.")
+        print("(dry run) --status would check the printer over USB; not touching USB.")
         return 0
     with usb_transport.Printer(serial=args.serial) as printer:
         device_id = printer.device_id()
-        raw = printer.query_status()
+        raw = printer.query_status() if args.probe else None
     print(f"device: {device_id}")
-    if raw is None:
-        print("status: no reply")
+    if not args.probe:
+        print(
+            "status: not queried (the TSPL status query is not sent by default -- "
+            "pass --probe to send it; see CLAUDE.md)"
+        )
+    elif raw is None:
+        print(
+            "status: no reply (this firmware does not answer TSPL status queries -- "
+            "verified on hardware 2026-09-27; expected, not an error)"
+        )
     else:
         flags = tspl_mod.decode_status(raw)
-        print(f"status: 0x{raw:02x} ({', '.join(flags) if flags else 'ready'})")
+        print(
+            f"status: 0x{raw:02x} ({', '.join(flags) if flags else 'ready'}) "
+            "-- unexpected: a status reply came back this time"
+        )
     return 0
 
 
 def _cmd_calibrate(args: argparse.Namespace) -> int:
-    job = tspl_mod.calibrate_job()
-    rc = _finish_job(args, job)
-    if rc == 0 and not args.test:
-        print("Calibration sent; the printer will feed a few labels to detect gap/label size.")
-    return rc
+    # Nothing is ever sent to the printer for calibration -- it's a manual,
+    # physical procedure (GAPDETECT was verified on hardware to be ignored).
+    print(tspl_mod.calibrate_instructions())
+    return 0
 
 
-def _cmd_feed(args: argparse.Namespace) -> int:
-    job = tspl_mod.feed_job()
+def _cmd_feed(args: argparse.Namespace, job_settings: "tspl_mod.JobSettings") -> int:
+    job = tspl_mod.feed_job(job_settings)
     rc = _finish_job(args, job)
     if rc == 0 and not args.test:
-        print("Fed one label.")
+        print("Fed one (blank) label.")
     return rc
 
 
 def _cmd_selftest(args: argparse.Namespace, job_settings: "tspl_mod.JobSettings") -> int:
     job = tspl_mod.selftest_job(job_settings)
     if args.preview:
-        # BOX/BAR/TEXT are drawn by the printer itself; this is an
-        # approximation (stand-in font) decoded from the exact job bytes.
-        _save_previews(
-            args.preview,
-            tspl_mod.simulate(
-                job,
-                job_settings.size.width_dots,
-                job_settings.size.height_dots,
-                job_settings.bitmap_black_is_one,
-            ),
-        )
+        # The self-test is a single BITMAP now, so the preview is the exact
+        # image sent, not an approximation.
+        _save_previews(args.preview, [tspl_mod.selftest_image(job_settings)])
     rc = _finish_job(args, job)
     if rc == 0 and not args.test:
         print("Self-test label sent.")
@@ -320,7 +333,7 @@ def _run(args: argparse.Namespace) -> int:
         if args.calibrate:
             return _cmd_calibrate(args)
         if args.feed:
-            return _cmd_feed(args)
+            return _cmd_feed(args, job_settings)
         if args.selftest:
             return _cmd_selftest(args, job_settings)
         if args.files:

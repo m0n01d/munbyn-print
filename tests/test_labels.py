@@ -145,6 +145,26 @@ def test_parse_size_width_over_max_raises_mm():
         parse_size("200x100mm")
 
 
+def test_parse_size_zero_or_negative_raises():
+    # A blank Custom-size web form field used to fall back to "0", producing
+    # a degenerate SIZE 0 mm,0 mm / BITMAP 0,0,1,1 job instead of an error.
+    with pytest.raises(ValueError):
+        parse_size("0x0mm")
+    with pytest.raises(ValueError):
+        parse_size("0x4in")
+    with pytest.raises(ValueError):
+        parse_size("4x0in")
+    with pytest.raises(ValueError):
+        parse_size("-4x6in")
+
+
+def test_parse_size_height_over_max_raises():
+    # An unbounded height (e.g. a typo'd 100x99999mm) used to render an
+    # unbounded bitmap (hundreds of MB) instead of a clean error.
+    with pytest.raises(ValueError):
+        parse_size("100x99999mm")
+
+
 def test_parse_size_width_at_boundary_ok():
     # 108mm exactly should be accepted (limit is inclusive).
     result = parse_size("108x50mm")

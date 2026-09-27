@@ -11,6 +11,12 @@ DPI = 203
 #: Max printable media width per the vendor PPD (4.25in). Anything wider is rejected.
 MAX_WIDTH_MM = 108.0
 
+#: Sane upper bound on label height (the vendor PPD's continuous-media max is
+#: 1440pt = ~508mm; this is a generous multiple of that, not a hardware spec,
+#: to catch fat-fingered/garbage input (e.g. a blank web form field) before it
+#: turns into a multi-hundred-megabyte bitmap). Anything taller is rejected.
+MAX_HEIGHT_MM = 1000.0
+
 
 def mm_to_dots(mm: float) -> int:
     """Convert a millimeter measurement to printer dots at ``DPI`` resolution."""
@@ -89,9 +95,16 @@ def parse_size(text: str) -> LabelSize:
     else:
         width_mm, height_mm = width * 25.4, height * 25.4
 
+    if width_mm <= 0 or height_mm <= 0:
+        raise ValueError(f"Label width and height must be positive: {text!r}")
     if width_mm > MAX_WIDTH_MM + 1e-6:
         raise ValueError(
             f"Label width {width_mm:.2f}mm exceeds the printer's max media "
             f"width of {MAX_WIDTH_MM:.2f}mm (4.25in): {text!r}"
+        )
+    if height_mm > MAX_HEIGHT_MM:
+        raise ValueError(
+            f"Label height {height_mm:.2f}mm exceeds the sane maximum of "
+            f"{MAX_HEIGHT_MM:.2f}mm: {text!r}"
         )
     return LabelSize(width_mm, height_mm)

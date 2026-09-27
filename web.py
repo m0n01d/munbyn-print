@@ -212,23 +212,86 @@ def create_app(test_mode: bool = False) -> Flask:
 
         return jsonify({"ok": True, "pages": len(pages), "bytes": len(job)})
 
+    @app.route("/api/selftest", methods=["POST"])
+    def api_selftest():
+        """Preview or print the built-in alignment/polarity self-test label
+        (no file upload -- just the current label/printer settings)."""
+        sec_err = _security_error(request)
+        if sec_err is not None:
+            return sec_err
+        try:
+            settings = _settings_from_form(request.form)
+            size = labels_mod.parse_size(str(settings["size"]))
+            job_settings = _job_settings_from_form(request.form, settings, size)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        preview_only = (request.form.get("preview") or "") in ("1", "true", "True")
+        if preview_only:
+            img = tspl_mod.selftest_image(job_settings)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+            return jsonify({
+                "pages": [f"data:image/png;base64,{encoded}"],
+                "width_dots": size.width_dots,
+                "height_dots": size.height_dots,
+            })
+
+        job = tspl_mod.selftest_job(job_settings)
+        if app.config["MUNBYN_TEST_MODE"]:
+            return jsonify({"ok": True, "dry_run": True, "describe": tspl_mod.describe(job)})
+
+        serial = request.form.get("serial") or None
+        try:
+            with _USB_LOCK:
+                with usb_transport.Printer(serial=serial) as printer:
+                    printer.write(job)
+        except usb_transport.PrinterError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 503
+
+        return jsonify({"ok": True, "pages": 1, "bytes": len(job)})
+
     @app.route("/api/status")
     def api_status():
+        sec_err = _security_error(request)
+        if sec_err is not None:
+            return sec_err
         if app.config["MUNBYN_TEST_MODE"]:
-            return jsonify({"connected": False, "device_id": None, "status": None, "dry_run": True})
+            return jsonify({
+                "connected": False, "device_id": None, "status": None, "dry_run": True,
+                "status_note": "dry-run mode (--test): USB is never touched",
+            })
         if not _USB_LOCK.acquire(timeout=2.0):
-            return jsonify({"connected": True, "device_id": None, "status": ["busy: job in progress"], "dry_run": False})
+            return jsonify({
+                "connected": True, "device_id": None, "status": ["busy: job in progress"],
+                "dry_run": False, "status_note": None,
+            })
         try:
             with usb_transport.Printer() as printer:
+                # Device ID is a USB control request, not a TSPL command --
+                # always safe. The TSPL status query (ESC !?) is NOT sent
+                # here: this firmware never replies to it (verified on
+                # hardware), and whether those unterminated bytes are safe to
+                # send right before the next job's SIZE line has not been
+                # verified -- see CLAUDE.md. Use `print_label.py --status
+                # --probe` to send it deliberately, off the web UI's path.
                 device_id = printer.device_id()
-                raw = printer.query_status()
         except usb_transport.PrinterError:
-            return jsonify({"connected": False, "device_id": None, "status": None, "dry_run": False})
+            return jsonify({
+                "connected": False, "device_id": None, "status": None, "dry_run": False,
+                "status_note": None,
+            })
         finally:
             _USB_LOCK.release()
 
-        flags = tspl_mod.decode_status(raw) if raw is not None else None
-        return jsonify({"connected": True, "device_id": device_id, "status": flags, "dry_run": False})
+        return jsonify({
+            "connected": True, "device_id": device_id, "status": None, "dry_run": False,
+            "status_note": (
+                "status not queried (the web UI never sends the TSPL status query -- "
+                "see CLAUDE.md)"
+            ),
+        })
 
     return app
 

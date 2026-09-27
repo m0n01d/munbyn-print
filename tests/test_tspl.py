@@ -2,22 +2,26 @@
 status decoding, and the self-test/calibrate/feed jobs."""
 from __future__ import annotations
 
+import pytest
 from PIL import Image
 
 from munbyn.labels import LabelSize, PRESETS, mm_to_dots, parse_size
 from munbyn.tspl import (
-    _DOT_FONTS,
+    CALIBRATION_INSTRUCTIONS,
     STATUS_QUERY,
+    SUPPORTED_COMMANDS,
     JobSettings,
+    _split_commands,
     bitmap_command,
     build_job,
-    calibrate_job,
+    calibrate_instructions,
     decode_status,
     describe,
     feed_job,
     header,
     hexdump,
     pack_bitmap,
+    selftest_image,
     selftest_job,
     simulate,
 )
@@ -107,6 +111,27 @@ def test_header_direction_and_density_speed_reflected():
     assert b"DENSITY 5\r\n" in data
     assert b"SPEED 8\r\n" in data
     assert b"DIRECTION 1,0\r\n" in data
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"density": 99},
+        {"density": -1},
+        {"speed": 0},
+        {"speed": 9},
+        {"direction": 2},
+        {"gap_mm": -1.0},
+        {"gap_offset_mm": -1.0},
+        {"offset_mm": -1.0},
+    ],
+)
+def test_header_rejects_out_of_range_settings(kwargs):
+    # Out-of-range values used to go straight into the job; on a firmware
+    # that silently drops jobs it doesn't like, that's a silent no-print.
+    s = JobSettings(size=PRESETS["2x1"], **kwargs)
+    with pytest.raises(ValueError):
+        header(s)
 
 
 # --------------------------------------------------------------------------
@@ -346,34 +371,115 @@ def test_status_query_bytes():
 
 
 # --------------------------------------------------------------------------
-# calibrate_job() / feed_job()
+# SUPPORTED_COMMANDS: every job we build must stick to the verified subset
 # --------------------------------------------------------------------------
 
 
-def test_calibrate_job():
-    assert calibrate_job() == b"GAPDETECT\r\n"
+def _assert_only_supported_commands(job: bytes):
+    for line, payload in _split_commands(job):
+        if payload is not None:
+            continue  # BITMAP payload bytes, not a command line
+        text = line.decode("ascii", "replace").strip()
+        if not text:
+            continue
+        assert any(text.startswith(cmd) for cmd in SUPPORTED_COMMANDS), (
+            "job used an unsupported/untested command: {!r}".format(text)
+        )
 
 
-def test_feed_job():
-    assert feed_job() == b"FORMFEED\r\n"
+def test_supported_commands_excludes_text_box_bar_gapdetect():
+    for banned in ("TEXT", "BOX", "BAR", "GAPDETECT", "FORMFEED", "SETC PAUSEKEY"):
+        assert banned not in SUPPORTED_COMMANDS
+
+
+def test_build_job_only_uses_supported_commands():
+    size = PRESETS["4x6"]
+    img = Image.new("1", (size.width_dots, size.height_dots), 255)
+    for media in ("gap", "bline", "continuous"):
+        job = build_job(JobSettings(size=size, media=media, copies=2), [img, img])
+        _assert_only_supported_commands(job)
+
+
+def test_selftest_job_only_uses_supported_commands():
+    for size in list(PRESETS.values()) + [parse_size("0.6x0.6in"), parse_size("1x1in")]:
+        _assert_only_supported_commands(selftest_job(JobSettings(size=size)))
+
+
+def test_feed_job_only_uses_supported_commands():
+    _assert_only_supported_commands(feed_job(JobSettings(size=PRESETS["4x6"])))
 
 
 # --------------------------------------------------------------------------
-# selftest_job(): must be readable, never crash, and scale to small labels
+# calibrate_instructions() / feed_job(): no printer commands, just a feed
 # --------------------------------------------------------------------------
 
 
-def test_selftest_job_4x6_contains_expected_elements():
+def test_calibrate_instructions_sends_nothing_and_describes_the_manual_procedure():
+    text = calibrate_instructions()
+    assert text is CALIBRATION_INSTRUCTIONS
+    assert "Nothing is sent to the printer" in text
+    assert "GAPDETECT" in text
+    assert "close" in text.lower() and "cover" in text.lower()
+    assert "ONE beep" in text
+    assert "TWO beeps" in text
+    assert "THREE beeps" in text
+    assert "green" in text.lower() and "blue" in text.lower() and "red" in text.lower()
+
+
+def test_feed_job_is_header_cls_print_no_bitmap():
+    s = JobSettings(size=PRESETS["4x6"])
+    job = feed_job(s)
+    assert job == header(s) + b"CLS\r\n" + b"PRINT 1,1\r\n"
+    assert b"BITMAP" not in job
+    assert b"FORMFEED" not in job
+
+
+def test_feed_job_reflects_settings():
+    s = JobSettings(size=PRESETS["2x1"], density=7, speed=2)
+    job = feed_job(s)
+    assert b"DENSITY 7\r\n" in job
+    assert b"SPEED 2\r\n" in job
+
+
+# --------------------------------------------------------------------------
+# selftest_image() / selftest_job(): must be readable, never crash, scale
+# --------------------------------------------------------------------------
+
+
+def test_selftest_image_is_label_sized_1bit():
+    size = PRESETS["4x6"]
+    img = selftest_image(JobSettings(size=size))
+    assert img.mode == "1"
+    assert img.size == (size.width_dots, size.height_dots)
+
+
+def test_selftest_job_4x6_is_header_cls_one_bitmap_print():
     s = JobSettings(size=PRESETS["4x6"], bitmap_black_is_one=True)
     job = selftest_job(s)
-    text = job.decode("ascii", "replace")
-    assert "MUNBYN RW403B TEST" in text
-    assert "polarity: black_is_one=1" in text
-    assert "BOX " in text
-    assert "BAR " in text
-    assert "BITMAP" in text  # big enough for the polarity swatch
-    assert "LEFT HALF SHOULD BE BLACK" in text
-    assert text.strip().endswith("PRINT 1,1")
+    assert job.startswith(header(s) + b"CLS\r\n")
+    assert job.count(b"BITMAP") == 1
+    assert job.rstrip(b"\r\n").endswith(b"PRINT 1,1")
+    assert b"TEXT" not in job and b"BOX " not in job and b"BAR " not in job
+    assert b"GAPDETECT" not in job
+
+
+def test_selftest_job_honours_x_and_y_shift():
+    # Regression: selftest_job used to hard-code BITMAP 0,0, ignoring
+    # --x-shift/--y-shift entirely, so calibrating against the self-test and
+    # saving the shift silently did nothing for the self-test itself.
+    s0 = JobSettings(size=PRESETS["4x6"])
+    s5 = JobSettings(size=PRESETS["4x6"], x_shift_mm=5.0, y_shift_mm=5.0)
+    job0 = selftest_job(s0)
+    job5 = selftest_job(s5)
+    assert b"BITMAP 0,0," in job0
+    assert b"BITMAP 0,0," not in job5
+    x_dots, y_dots = mm_to_dots(5.0), mm_to_dots(5.0)
+    assert "BITMAP {},{},".format(x_dots, y_dots).encode("ascii") in job5
+
+
+def test_selftest_job_honours_copies():
+    s = JobSettings(size=PRESETS["2x1"], copies=3)
+    assert selftest_job(s).rstrip(b"\r\n").endswith(b"PRINT 1,3")
 
 
 def test_selftest_job_never_crashes_on_any_preset():
@@ -385,27 +491,35 @@ def test_selftest_job_never_crashes_on_any_preset():
 
 
 def test_selftest_job_skips_swatch_on_tiny_label():
+    # 0.6x0.6in leaves no room for the swatch: the lower-center interior
+    # (well clear of the border/ruler ticks, which only run along the
+    # top/left edges) must stay blank.
     tiny = parse_size("0.6x0.6in")
-    s = JobSettings(size=tiny)
-    job = selftest_job(s)
-    assert b"BITMAP" not in job
-    assert b"LEFT HALF SHOULD BE BLACK" not in job
-    # Still a valid, well-formed job.
-    assert job.startswith(b"SIZE")
+    img = selftest_image(JobSettings(size=tiny))
+    assert img.getpixel((tiny.width_dots // 2, tiny.height_dots * 3 // 4)) == 255
+    # Still exactly one BITMAP -- a valid, well-formed job.
+    assert selftest_job(JobSettings(size=tiny)).count(b"BITMAP") == 1
 
 
 def test_selftest_job_small_label_keeps_a_shrunk_swatch():
-    # The polarity swatch is the most important part; 1x1in still gets one,
-    # with the short caption.
-    job = selftest_job(JobSettings(size=parse_size("1x1in")))
-    assert b"BITMAP" in job
-    assert b"LEFT=BLACK" in job
+    # The polarity swatch is the most important part; 1x1in still gets one.
+    size = parse_size("1x1in")
+    img = selftest_image(JobSettings(size=size))
+    assert img.getpixel((size.width_dots // 4, size.height_dots * 3 // 4)) == 0
 
 
-def test_selftest_job_polarity_flip_reflected_in_text():
-    s0 = JobSettings(size=PRESETS["4x6"], bitmap_black_is_one=False)
-    job0 = selftest_job(s0)
-    assert b"polarity: black_is_one=0" in job0
+def test_selftest_wrong_polarity_inverts_the_whole_label():
+    # Everything (not just a swatch) now goes through one BITMAP, so a wrong
+    # black_is_one guess (encode side) inverts the whole self-test label --
+    # an even more obvious tell than the old TEXT/BOX self-test could give.
+    size = PRESETS["4x6"]
+    s = JobSettings(size=size, bitmap_black_is_one=False)
+    img = selftest_image(s)
+    right = header(s) + b"CLS\r\n" + bitmap_command(0, 0, img, False) + b"PRINT 1,1\r\n"
+    wrong = header(s) + b"CLS\r\n" + bitmap_command(0, 0, img, True) + b"PRINT 1,1\r\n"
+    page_right = simulate(right, size.width_dots, size.height_dots, False)[0]
+    page_wrong = simulate(wrong, size.width_dots, size.height_dots, False)[0]
+    assert list(page_wrong.getdata()) == [255 - v for v in page_right.getdata()]
 
 
 # --------------------------------------------------------------------------
@@ -467,15 +581,14 @@ def test_selftest_swatch_left_half_black_in_simulation():
         assert page.getpixel((sx + 3 * sw // 4, mid_y)) == 255  # right half white
 
 
-def test_selftest_text_stays_on_the_label_for_every_preset():
-    import re
-
-    text_re = re.compile(rb'TEXT (\d+),(\d+),"(\w+)",0,1,1,"([^"]*)"')
-    for size in list(PRESETS.values()) + [parse_size("1x1in")]:
-        job = selftest_job(JobSettings(size=size))
-        for m in text_re.finditer(job):
-            x, y = int(m.group(1)), int(m.group(2))
-            fw, fh = _DOT_FONTS[m.group(3).decode()]
-            right = x + len(m.group(4)) * fw
-            assert right <= size.width_dots - mm_to_dots(1.0), (size, m.group(0))
-            assert y + fh <= size.height_dots - mm_to_dots(1.0), (size, m.group(0))
+def test_selftest_image_never_crashes_on_extreme_aspect_ratios():
+    # Very thin/tall or thin/wide labels used to be a risk for the old
+    # TEXT/BOX layout math; the pixel-drawing version must degrade (skip
+    # elements) rather than raise or draw outside the canvas.
+    for size in (
+        LabelSize(15.0, 100.0, "thin-tall"),
+        LabelSize(100.0, 15.0, "thin-wide"),
+        LabelSize(6.0, 6.0, "postage"),
+    ):
+        img = selftest_image(JobSettings(size=size))
+        assert img.size == (size.width_dots, size.height_dots)

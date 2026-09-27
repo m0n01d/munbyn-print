@@ -1,0 +1,388 @@
+*PPD-Adobe:             "4.3"
+*%
+*% Munbyn RW403B (native) -- munbyn-print project.
+*% Derived from Munbyn's /Library/Printers/Munbyn/RW403B.ppd (FileVersion 1.0.4,
+*% created by Caissa 2024/08/13). Same options, defaults and 203 dpi 8-bit gray
+*% raster, but the filter is munbyn-print's native (arm64 + x86_64)
+*% rastertotspl, which emits only the TSPL subset verified on the printer.
+*% Added: 4x4/4x3/4x2/4x1 in sizes, a 1-4.25 x 0.5-20 in custom size, and
+*% a Threshold option. Installed by scripts/install-cups-queue.sh.
+*%
+*FormatVersion:         "4.3"
+*FileVersion:           "1.0.0"
+*LanguageVersion:       English
+*LanguageEncoding:      ISOLatin1
+*PCFileName:            "RW403BN.ppd"
+*Manufacturer:          "Munbyn"
+*Product:               "(RW403B)"
+*ModelName:             "Munbyn RW403B native"
+*NickName:              "Munbyn RW403B (native)"
+*ShortNickName:         "Munbyn RW403B (native)"
+*1284DeviceID:          "MFG:Munbyn;CMD:XPP,XL;MDL:RW403B;CLS:PRINTER"
+*cupsVersion:           1.2
+*cupsManualCopies:      False
+*cupsFilter:            "application/vnd.cups-raster 0 /Library/Printers/Munbyn/rastertotspl"
+*PSVersion:             "(3010.000) 550"
+*PSVersion:             "(3010.000) 651"
+*PSVersion:             "(3010.000) 652"
+*PSVersion:             "(3010.000) 653"
+*PSVersion:             "(3010.000) 704"
+*PSVersion:             "(3010.000) 705"
+*PSVersion:             "(3010.000) 800"
+*LanguageLevel:         "3"
+*ColorDevice:           False
+*DefaultColorSpace:     Gray
+*FileSystem:            False
+*Throughput:            "1"
+*LandscapeOrientation:  Plus90
+*VariablePaperSize:     True
+*TTRasterizer:          Type42
+
+
+*MaxMediaWidth:         "306.14"
+*MaxMediaHeight:        "1440"
+*HWMargins:             0.00 0.00 0.00 0.00
+*CustomPageSize True:   "pop pop pop <</PageSize[5 -2 roll]/ImagingBBox null>>setpagedevice"
+*ParamCustomPageSize    Width:          1 points 72 306.14
+*ParamCustomPageSize    Height:         2 points 36 1440
+*ParamCustomPageSize    WidthOffset:    3 points 0 0
+*ParamCustomPageSize    HeightOffset:   4 points 0 0
+*ParamCustomPageSize    Orientation:    5 int 0 0
+*RequiresPageRegion     All:            True
+
+*OpenUI *PageSize/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageSize
+*DefaultPageSize: w288h432
+*PageSize w115h86/1.60x1.20": "<</PageSize[115.2 86.4]/ImagingBBox null>>setpagedevice"
+*PageSize w141h86/1.96x1.20": "<</PageSize[141.12 86.4]/ImagingBBox null>>setpagedevice"
+*PageSize w141h141/1.96x1.96": "<</PageSize[141.12 141.12]/ImagingBBox null>>setpagedevice"
+*PageSize w144h72/2.00x1.00": "<</PageSize[144 72]/ImagingBBox null>>setpagedevice"
+*PageSize w144h144/2.00x2.00": "<</PageSize[144 144]/ImagingBBox null>>setpagedevice"
+*PageSize w166h166/2.30x2.30": "<</PageSize[165.6 165.6]/ImagingBBox null>>setpagedevice"
+*PageSize w162h162/2.25x2.25": "<</PageSize[162 162]/ImagingBBox null>>setpagedevice"
+*PageSize w162h90/2.25x1.25": "<</PageSize[162 90]/ImagingBBox null>>setpagedevice"
+*PageSize w180h108/2.50x1.50": "<</PageSize[180 108]/ImagingBBox null>>setpagedevice"
+*PageSize w216h144/3.00x2.00": "<</PageSize[216 144]/ImagingBBox null>>setpagedevice"
+*PageSize w216h216/3.00x3.00": "<</PageSize[216 216]/ImagingBBox null>>setpagedevice"
+*PageSize w216h360/3.00x5.00": "<</PageSize[216 360]/ImagingBBox null>>setpagedevice"
+*PageSize w288h432/4.00x6.00": "<</PageSize[288 432]/ImagingBBox null>>setpagedevice"
+*PageSize w288h288/4.00x4.00": "<</PageSize[288 288]/ImagingBBox null>>setpagedevice"
+*PageSize w288h216/4.00x3.00": "<</PageSize[288 216]/ImagingBBox null>>setpagedevice"
+*PageSize w288h144/4.00x2.00": "<</PageSize[288 144]/ImagingBBox null>>setpagedevice"
+*PageSize w288h72/4.00x1.00": "<</PageSize[288 72]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageSize
+
+*OpenUI *PageRegion/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageRegion
+*DefaultPageRegion: w288h432
+*PageRegion w115h86/1.60x1.20": "<</PageSize[115.2 86.4]/ImagingBBox null>>setpagedevice"
+*PageRegion w141h86/1.96x1.20": "<</PageSize[141.12 86.4]/ImagingBBox null>>setpagedevice"
+*PageRegion w141h141/1.96x1.96": "<</PageSize[141.12 141.12]/ImagingBBox null>>setpagedevice"
+*PageRegion w144h72/2.00x1.00": "<</PageSize[144 72]/ImagingBBox null>>setpagedevice"
+*PageRegion w144h144/2.00x2.00": "<</PageSize[144 144]/ImagingBBox null>>setpagedevice"
+*PageRegion w166h166/2.30x2.30": "<</PageSize[165.6 165.6]/ImagingBBox null>>setpagedevice"
+*PageRegion w162h162/2.25x2.25": "<</PageSize[162 162]/ImagingBBox null>>setpagedevice"
+*PageRegion w162h90/2.25x1.25": "<</PageSize[162 90]/ImagingBBox null>>setpagedevice"
+*PageRegion w180h108/2.50x1.50": "<</PageSize[180 108]/ImagingBBox null>>setpagedevice"
+*PageRegion w216h144/3.00x2.00": "<</PageSize[216 144]/ImagingBBox null>>setpagedevice"
+*PageRegion w216h216/3.00x3.00": "<</PageSize[216 216]/ImagingBBox null>>setpagedevice"
+*PageRegion w216h360/3.00x5.00": "<</PageSize[216 360]/ImagingBBox null>>setpagedevice"
+*PageRegion w288h432/4.00x6.00": "<</PageSize[288 432]/ImagingBBox null>>setpagedevice"
+*PageRegion w288h288/4.00x4.00": "<</PageSize[288 288]/ImagingBBox null>>setpagedevice"
+*PageRegion w288h216/4.00x3.00": "<</PageSize[288 216]/ImagingBBox null>>setpagedevice"
+*PageRegion w288h144/4.00x2.00": "<</PageSize[288 144]/ImagingBBox null>>setpagedevice"
+*PageRegion w288h72/4.00x1.00": "<</PageSize[288 72]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageRegion
+
+*DefaultImageableArea: w288h432
+*ImageableArea w115h86/1.60x1.20": "0 0 115.2 86.4"
+*ImageableArea w141h86/1.96x1.20": "0 0 141.12 86.4"
+*ImageableArea w141h141/1.96x1.96": "0 0 141.12 141.12"
+*ImageableArea w144h72/2.00x1.00": "0 0 144 72"
+*ImageableArea w144h144/2.00x2.00": "0 0 144 144"
+*ImageableArea w166h166/2.30x2.30": "0 0 165.6 165.6"
+*ImageableArea w162h162/2.25x2.25": "0 0 162 162"
+*ImageableArea w162h90/2.25x1.25": "0 0 162 90"
+*ImageableArea w180h108/2.50x1.50": "0 0 180 108"
+*ImageableArea w216h144/3.00x2.00": "0 0 216 144"
+*ImageableArea w216h216/3.00x3.00": "0 0 216 216"
+*ImageableArea w216h360/3.00x5.00": "0 0 216 360"
+*ImageableArea w288h432/4.00x6.00": "0 0 288 432"
+*ImageableArea w288h288/4.00x4.00": "0 0 288 288"
+*ImageableArea w288h216/4.00x3.00": "0 0 288 216"
+*ImageableArea w288h144/4.00x2.00": "0 0 288 144"
+*ImageableArea w288h72/4.00x1.00": "0 0 288 72"
+
+*DefaultPaperDimension: w288h432
+*PaperDimension w115h86/1.60x1.20": "115.2 86.4"
+*PaperDimension w141h86/1.96x1.20": "141.12 86.4"
+*PaperDimension w141h141/1.96x1.96": "141.12 141.12"
+*PaperDimension w144h72/2.00x1.00": "144 72"
+*PaperDimension w144h144/2.00x2.00": "144 144"
+*PaperDimension w166h166/2.30x2.30": "165.6 165.6"
+*PaperDimension w162h162/2.25x2.25": "162 162"
+*PaperDimension w162h90/2.25x1.25": "162 90"
+*PaperDimension w180h108/2.50x1.50": "180 108"
+*PaperDimension w216h144/3.00x2.00": "216 144"
+*PaperDimension w216h216/3.00x3.00": "216 216"
+*PaperDimension w216h360/3.00x5.00": "216 360"
+*PaperDimension w288h432/4.00x6.00": "288 432"
+*PaperDimension w288h288/4.00x4.00": "288 288"
+*PaperDimension w288h216/4.00x3.00": "288 216"
+*PaperDimension w288h144/4.00x2.00": "288 144"
+*PaperDimension w288h72/4.00x1.00": "288 72"
+
+
+*OpenUI *Resolution/Resolution: PickOne
+*OrderDependency: 300 AnySetup *Resolution
+*DefaultResolution: 203dpi
+*Resolution 203dpi/203 dpi x 203 dpi: "<</HWResolution[203 203]/cupsBitsPerColor 8/cupsRowCount 8/cupsRowFeed 0/cupsRowStep 0/cupsColorSpace 0>>setpagedevice"
+*CloseUI: *Resolution
+
+
+*OpenGroup: PrinterSettings/Printer Settings
+
+*OpenUI *MediaType/MediaType: PickOne
+*OrderDependency: 20 AnySetup *MediaType
+*DefaultMediaType: 1
+*MediaType 1/Gap: ""
+*MediaType 0/Continuous: ""
+*MediaType 2/Black Line: ""
+*CloseUI: *MediaType
+
+*OpenUI *GapHeight/Gap Height: PickOne
+*OrderDependency: 30 AnySetup *GapHeight
+*DefaultGapHeight: 3
+*GapHeight 0/0mm: "%%"
+*GapHeight 1/1mm: "%%"
+*GapHeight 2/2mm: "%%"
+*GapHeight 3/3mm: "%%"
+*GapHeight 4/4mm: "%%"
+*GapHeight 5/5mm: "%%"
+*GapHeight 6/6mm: "%%"
+*GapHeight 7/7mm: "%%"
+*GapHeight 8/8mm: "%%"
+*GapHeight 9/9mm: "%%"
+*GapHeight 10/10mm: "%%"
+*CloseUI: *GapHeight
+
+*OpenUI *GapOffset/Gap Offset: PickOne
+*OrderDependency: 30 AnySetup *GapOffset
+*DefaultGapOffset: 0
+*GapOffset 0/0mm: "%%"
+*GapOffset 1/1mm: "%%"
+*GapOffset 2/2mm: "%%"
+*GapOffset 3/3mm: "%%"
+*GapOffset 4/4mm: "%%"
+*GapOffset 5/5mm: "%%"
+*GapOffset 6/6mm: "%%"
+*GapOffset 7/7mm: "%%"
+*GapOffset 8/8mm: "%%"
+*GapOffset 9/9mm: "%%"
+*GapOffset 10/10mm: "%%"
+*CloseUI: *GapOffset
+
+*OpenUI *PrintSpeed/Speed: PickOne
+*OrderDependency: 110 AnySetup *PrintSpeed
+*DefaultPrintSpeed: 40
+*PrintSpeed 10/1: "%%"
+*PrintSpeed 20/2: "%%"
+*PrintSpeed 30/3: "%%"
+*PrintSpeed 40/4: "%%"
+*PrintSpeed 50/5: "%%"
+*PrintSpeed 60/6: "%%"
+*PrintSpeed 70/7: "%%"
+*PrintSpeed 80/8: "%%"
+*CloseUI: *PrintSpeed
+
+*OpenUI *Darkness/Density: PickOne
+*OrderDependency: 120 AnySetup *Darkness
+*DefaultDarkness: 12
+*Darkness 1: "%%"
+*Darkness 2: "%%"
+*Darkness 3: "%%"
+*Darkness 4: "%%"
+*Darkness 5: "%%"
+*Darkness 6: "%%"
+*Darkness 7: "%%"
+*Darkness 8: "%%"
+*Darkness 9: "%%"
+*Darkness 10: "%%"
+*Darkness 11: "%%"
+*Darkness 12: "%%"
+*Darkness 13: "%%"
+*Darkness 14: "%%"
+*Darkness 15: "%%"
+*Darkness 16: "%%"
+*CloseUI: *Darkness
+
+*CloseGroup: PrinterSettings
+
+
+*OpenGroup: ImageParamters/Image Parameters
+
+*OpenUI *Horizontal/Horizontal Offset: PickOne
+*OrderDependency: 130 AnySetup *Horizontal
+*DefaultHorizontal: 0
+*Horizontal -20/-20mm: "%%"
+*Horizontal -19/-19mm: "%%"
+*Horizontal -18/-18mm: "%%"
+*Horizontal -17/-17mm: "%%"
+*Horizontal -16/-16mm: "%%"
+*Horizontal -15/-15mm: "%%"
+*Horizontal -14/-14mm: "%%"
+*Horizontal -13/-13mm: "%%"
+*Horizontal -12/-12mm: "%%"
+*Horizontal -11/-11mm: "%%"
+*Horizontal -10/-10mm: "%%"
+*Horizontal -9/-9mm: "%%"
+*Horizontal -8/-8mm: "%%"
+*Horizontal -7/-7mm: "%%"
+*Horizontal -6/-6mm: "%%"
+*Horizontal -5/-5mm: "%%"
+*Horizontal -4/-4mm: "%%"
+*Horizontal -3/-3mm: "%%"
+*Horizontal -2/-2mm: "%%"
+*Horizontal -1/-1mm: "%%"
+*Horizontal 0/0mm: "%%"
+*Horizontal 1/1mm: "%%"
+*Horizontal 2/2mm: "%%"
+*Horizontal 3/3mm: "%%"
+*Horizontal 4/4mm: "%%"
+*Horizontal 5/5mm: "%%"
+*Horizontal 6/6mm: "%%"
+*Horizontal 7/7mm: "%%"
+*Horizontal 8/8mm: "%%"
+*Horizontal 9/9mm: "%%"
+*Horizontal 10/10mm: "%%"
+*Horizontal 11/11mm: "%%"
+*Horizontal 12/12mm: "%%"
+*Horizontal 13/13mm: "%%"
+*Horizontal 14/14mm: "%%"
+*Horizontal 15/15mm: "%%"
+*Horizontal 16/16mm: "%%"
+*Horizontal 17/17mm: "%%"
+*Horizontal 18/18mm: "%%"
+*Horizontal 19/19mm: "%%"
+*Horizontal 20/20mm: "%%"
+*CloseUI: *Horizontal
+
+*OpenUI *Vertical/Vertical Offset: PickOne
+*OrderDependency: 140 AnySetup *Vertical
+*DefaultVertical: 0
+*Vertical -20/-20mm: "%%"
+*Vertical -19/-19mm: "%%"
+*Vertical -18/-18mm: "%%"
+*Vertical -17/-17mm: "%%"
+*Vertical -16/-16mm: "%%"
+*Vertical -15/-15mm: "%%"
+*Vertical -14/-14mm: "%%"
+*Vertical -13/-13mm: "%%"
+*Vertical -12/-12mm: "%%"
+*Vertical -11/-11mm: "%%"
+*Vertical -10/-10mm: "%%"
+*Vertical -9/-9mm: "%%"
+*Vertical -8/-8mm: "%%"
+*Vertical -7/-7mm: "%%"
+*Vertical -6/-6mm: "%%"
+*Vertical -5/-5mm: "%%"
+*Vertical -4/-4mm: "%%"
+*Vertical -3/-3mm: "%%"
+*Vertical -2/-2mm: "%%"
+*Vertical -1/-1mm: "%%"
+*Vertical 0/0mm: "%%"
+*Vertical 1/1mm: "%%"
+*Vertical 2/2mm: "%%"
+*Vertical 3/3mm: "%%"
+*Vertical 4/4mm: "%%"
+*Vertical 5/5mm: "%%"
+*Vertical 6/6mm: "%%"
+*Vertical 7/7mm: "%%"
+*Vertical 8/8mm: "%%"
+*Vertical 9/9mm: "%%"
+*Vertical 10/10mm: "%%"
+*Vertical 11/11mm: "%%"
+*Vertical 12/12mm: "%%"
+*Vertical 13/13mm: "%%"
+*Vertical 14/14mm: "%%"
+*Vertical 15/15mm: "%%"
+*Vertical 16/16mm: "%%"
+*Vertical 17/17mm: "%%"
+*Vertical 18/18mm: "%%"
+*Vertical 19/19mm: "%%"
+*Vertical 20/20mm: "%%"
+*CloseUI: *Vertical
+
+*OpenUI *Rotate/Rotate: PickOne
+*OrderDependency: 160 AnySetup *Rotate
+*DefaultRotate: 0
+*Rotate 0/0: "%%"
+*Rotate 2/90: "%%"
+*Rotate 1/180: "%%"
+*Rotate 3/270: "%%"
+*CloseUI: *Rotate
+
+*OpenUI *PrintMode/Image Algorithm: PickOne
+*OrderDependency: 150 AnySetup *PrintMode
+*DefaultPrintMode: 5
+*PrintMode 2/Diffusion: "%%"
+*PrintMode 3/Gathering: "%%"
+*PrintMode 4/ErrorDiffusion: "%%"
+*PrintMode 5/Default: "%%"
+*CloseUI: *PrintMode
+
+*OpenUI *Threshold/Black Threshold: PickOne
+*OrderDependency: 155 AnySetup *Threshold
+*DefaultThreshold: 160
+*Threshold 96/96 (lighter): "%%"
+*Threshold 128/128: "%%"
+*Threshold 160/160 (default): "%%"
+*Threshold 192/192: "%%"
+*Threshold 224/224 (darker): "%%"
+*CloseUI: *Threshold
+
+*CloseGroup: ImageParamters
+
+
+*% Generic boilerplate PPD stuff as standard PosRTript fonts and so on
+
+*DefaultFont: Courier
+*Font AvantGarde-Book: Standard "(001.006S)" Standard ROM
+*Font AvantGarde-BookOblique: Standard "(001.006S)" Standard ROM
+*Font AvantGarde-Demi: Standard "(001.007S)" Standard ROM
+*Font AvantGarde-DemiOblique: Standard "(001.007S)" Standard ROM
+*Font Bookman-Demi: Standard "(001.004S)" Standard ROM
+*Font Bookman-DemiItalic: Standard "(001.004S)" Standard ROM
+*Font Bookman-Light: Standard "(001.004S)" Standard ROM
+*Font Bookman-LightItalic: Standard "(001.004S)" Standard ROM
+*Font Courier: Standard "(002.004S)" Standard ROM
+*Font Courier-Bold: Standard "(002.004S)" Standard ROM
+*Font Courier-BoldOblique: Standard "(002.004S)" Standard ROM
+*Font Courier-Oblique: Standard "(002.004S)" Standard ROM
+*Font Helvetica: Standard "(001.006S)" Standard ROM
+*Font Helvetica-Bold: Standard "(001.007S)" Standard ROM
+*Font Helvetica-BoldOblique: Standard "(001.007S)" Standard ROM
+*Font Helvetica-Narrow: Standard "(001.006S)" Standard ROM
+*Font Helvetica-Narrow-Bold: Standard "(001.007S)" Standard ROM
+*Font Helvetica-Narrow-BoldOblique: Standard "(001.007S)" Standard ROM
+*Font Helvetica-Narrow-Oblique: Standard "(001.006S)" Standard ROM
+*Font Helvetica-Oblique: Standard "(001.006S)" Standard ROM
+*Font NewCenturySchlbk-Bold: Standard "(001.009S)" Standard ROM
+*Font NewCenturySchlbk-BoldItalic: Standard "(001.007S)" Standard ROM
+*Font NewCenturySchlbk-Italic: Standard "(001.006S)" Standard ROM
+*Font NewCenturySchlbk-Roman: Standard "(001.007S)" Standard ROM
+*Font Palatino-Bold: Standard "(001.005S)" Standard ROM
+*Font Palatino-BoldItalic: Standard "(001.005S)" Standard ROM
+*Font Palatino-Italic: Standard "(001.005S)" Standard ROM
+*Font Palatino-Roman: Standard "(001.005S)" Standard ROM
+*Font Symbol: Special "(001.007S)" Special ROM
+*Font Times-Bold: Standard "(001.007S)" Standard ROM
+*Font Times-BoldItalic: Standard "(001.009S)" Standard ROM
+*Font Times-Italic: Standard "(001.007S)" Standard ROM
+*Font Times-Roman: Standard "(001.007S)" Standard ROM
+*Font ZapfChancery-MediumItalic: Standard "(001.007S)" Standard ROM
+*Font ZapfDingbats: Special "(001.004S)" Standard ROM
+
+*%
+*% End of PPD
+*%

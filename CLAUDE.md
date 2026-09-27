@@ -20,19 +20,42 @@ web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package.
 without `--test`, and must never call a transport `write()` on the real
 device.** Tests always mock USB (`munbyn.usb_transport.Printer`) -- they never
 open the real device. Only a human, or an explicit human-approved real print,
-should print for real.
+should print for real. This applies to every agent working in this repo, not
+just whichever one is touching `munbyn/`/CLI/web code that turn.
+
+## The printer's command subset (hardware-verified 2026-09-27)
+
+This firmware's USB path only implements a subset of TSPL -- anything outside
+it is **silently dropped, not merely ignored**: a job using native
+`TEXT`/`BOX`/`BAR` commands (with an otherwise-correct header) printed
+**nothing at all**, not even a feed. `GAPDETECT` alone was also verified to do
+nothing. Every job this repo builds is therefore restricted to
+`munbyn.tspl.SUPPORTED_COMMANDS`: `SIZE, GAP, BLINE, REFERENCE, OFFSET, SETC
+AUTODOTTED OFF, DENSITY, SPEED, DIRECTION, CLS, BITMAP (mode 1), PRINT` --
+enforced by a test that scans every job builder's output. Anything that needs
+text, a box, or a bar has to be drawn as pixels and sent as `BITMAP` instead
+(see `selftest_image`/`selftest_job` in `munbyn/tspl.py`). Two more commands
+exist in the vendor filter binary (`SETC PAUSEKEY OFF`, and a compressed
+`BITMAP x,y,wb,h,3,len,<data>` mode that links libz) but are **untested** and
+must not be used without a fresh hardware verification.
 
 ## Module map
 
 - `print_label.py` -- CLI entry (argparse), thin
 - `web.py` -- Flask entry, the same options over HTTP
 - `munbyn/labels.py` -- label sizes, mm/dot conversion, size parsing
-- `munbyn/tspl.py` -- TSPL command builder (header, bitmap, jobs, status decode)
+- `munbyn/tspl.py` -- TSPL command builder (header, bitmap, jobs, status decode,
+  `SUPPORTED_COMMANDS`)
 - `munbyn/usb_transport.py` -- pyusb transport (`Printer`, `find_printers`)
 - `munbyn/render.py` -- PDF/image to 1-bit label bitmap
 - `munbyn/config.py` -- `~/.config/munbyn-print/config.json` persistence
 - `templates/`, `static/` -- web UI (plain HTML/JS, no build step)
-- `scripts/install-pdf-service.sh` -- macOS "Print to Munbyn RW403B" PDF Service
+- `scripts/install-pdf-service.sh` -- builds & links the "Print to Munbyn
+  RW403B" macOS PDF Service app (an app bundle, not an executable script --
+  see the README/PLAN for why)
+- `scripts/print-from-dialog.sh` -- wrapper that app's droplet shells out to
+- `cups/`, `scripts/install-cups-queue.sh` -- native arm64 CUPS queue; owned by
+  a different agent/track, not by the files above
 
 ## Shared conventions
 
