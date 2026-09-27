@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Munbyn RW403B Print</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>Munbyn RW403B</h1>
+  <div id="status-line" class="status">checking printer&hellip;</div>
+</header>
+
+<main>
+  <section id="drop-zone" class="drop-zone" tabindex="0">
+    <p>Drag a PDF or image here, or click to choose a file.</p>
+    <input type="file" id="file-input"
+           accept=".pdf,.png,.jpg,.jpeg,.gif,.bmp,.tif,.tiff,.webp,.heic,application/pdf,image/*">
+    <p id="file-name" class="file-name"></p>
+  </section>
+
+  <section class="options">
+    <fieldset>
+      <legend>Label</legend>
+      <label>Size
+        <select id="opt-size">
+          <option value="4x6">4 x 6 in</option>
+          <option value="3x5">3 x 5 in</option>
+          <option value="3x3">3 x 3 in</option>
+          <option value="3x2">3 x 2 in</option>
+          <option value="2.5x1.5">2.5 x 1.5 in</option>
+          <option value="2.30x2.30">2.30 x 2.30 in</option>
+          <option value="2.25x2.25">2.25 x 2.25 in</option>
+          <option value="2.25x1.25">2.25 x 1.25 in</option>
+          <option value="2x2">2 x 2 in</option>
+          <option value="2x1">2 x 1 in</option>
+          <option value="1.96x1.96">1.96 x 1.96 in</option>
+          <option value="1.96x1.20">1.96 x 1.20 in</option>
+          <option value="1.60x1.20">1.60 x 1.20 in</option>
+          <option value="custom">Custom&hellip;</option>
+        </select>
+      </label>
+      <label class="custom-size" hidden>Width (mm) <input type="number" id="opt-width-mm" step="0.1" min="1"></label>
+      <label class="custom-size" hidden>Height (mm) <input type="number" id="opt-height-mm" step="0.1" min="1"></label>
+
+      <label>Media
+        <select id="opt-media">
+          <option value="gap">Gap</option>
+          <option value="bline">Black line</option>
+          <option value="continuous">Continuous</option>
+        </select>
+      </label>
+      <label>Gap (mm) <input type="number" id="opt-gap-mm" step="0.1" value="3"></label>
+      <label>Gap offset (mm) <input type="number" id="opt-gap-offset-mm" step="0.1" value="0"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Fit</legend>
+      <label>Fit
+        <select id="opt-fit">
+          <option value="fit">Fit (scale to label)</option>
+          <option value="fill">Fill (crop to fill)</option>
+          <option value="stretch">Stretch</option>
+          <option value="actual">Actual size</option>
+        </select>
+      </label>
+      <label>Scale % (overrides fit) <input type="number" id="opt-scale" step="1" min="1" placeholder="e.g. 100"></label>
+      <label>Rotate
+        <select id="opt-rotate">
+          <option value="auto">Auto</option>
+          <option value="0">0&deg;</option>
+          <option value="90">90&deg;</option>
+          <option value="180">180&deg;</option>
+          <option value="270">270&deg;</option>
+        </select>
+      </label>
+      <label>Crop
+        <select id="opt-crop">
+          <option value="auto">Trim white margins</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+      <label>Align
+        <select id="opt-align">
+          <option value="center">Center</option>
+          <option value="top">Top</option>
+          <option value="top-left">Top-left</option>
+        </select>
+      </label>
+      <label>Margin (mm) <input type="number" id="opt-margin-mm" step="0.1" value="0"></label>
+      <label>Pages <input type="text" id="opt-pages" placeholder="e.g. 1-3,5 (default: all)"></label>
+      <label>Copies <input type="number" id="opt-copies" min="1" value="1"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Image</legend>
+      <label>Dither
+        <select id="opt-dither">
+          <option value="threshold">Threshold (crisp text/barcodes)</option>
+          <option value="floyd">Floyd&ndash;Steinberg (photos)</option>
+        </select>
+      </label>
+      <label>Threshold <input type="number" id="opt-threshold" min="0" max="255" value="160"></label>
+      <label class="checkbox"><input type="checkbox" id="opt-invert"> Invert</label>
+      <label>Bitmap polarity
+        <select id="opt-black-is-one">
+          <option value="">Default</option>
+          <option value="0">clear bit = black (TSPL default)</option>
+          <option value="1">set bit = black</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Printer</legend>
+      <label>Density <input type="number" id="opt-density" min="0" max="15" value="12"></label>
+      <label>Speed <input type="number" id="opt-speed" min="1" max="8" value="4"></label>
+      <label>Direction
+        <select id="opt-direction">
+          <option value="0">0</option>
+          <option value="1">1</option>
+        </select>
+      </label>
+      <label>Offset (mm) <input type="number" id="opt-offset-mm" step="0.1" value="0"></label>
+      <label>X shift (mm) <input type="number" id="opt-x-shift-mm" step="0.1" value="0"></label>
+      <label>Y shift (mm) <input type="number" id="opt-y-shift-mm" step="0.1" value="0"></label>
+      <label>Serial (optional) <input type="text" id="opt-serial" placeholder="filter by printer serial"></label>
+    </fieldset>
+  </section>
+
+  <section class="actions">
+    <button id="btn-preview" type="button">Preview</button>
+    <button id="btn-print" type="button">Print</button>
+    <span id="busy" class="busy" hidden>working&hellip;</span>
+  </section>
+
+  <section id="preview-pane" class="preview-pane"></section>
+  <section id="result" class="result"></section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
