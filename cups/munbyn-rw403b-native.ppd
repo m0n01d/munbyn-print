@@ -2,14 +2,22 @@
 *%
 *% Munbyn RW403B (native) -- munbyn-print project.
 *% Derived from Munbyn's /Library/Printers/Munbyn/RW403B.ppd (FileVersion 1.0.4,
-*% created by Caissa 2024/08/13). Same options, defaults and 203 dpi 8-bit gray
+*% created by Caissa 2024/08/13). Same options, defaults and 8-bit gray
 *% raster, but the filter is munbyn-print's native (arm64 + x86_64)
 *% rastertotspl, which emits only the TSPL subset verified on the printer.
 *% Added: 4x4/4x3/4x2/4x1 in sizes, a 1-4.25 x 0.5-20 in custom size, and
 *% a Threshold option. Installed by scripts/install-cups-queue.sh.
 *%
+*% Feed correction: the head is exact across (8 dots/mm), but the paper feed
+*% is short -- an 800-row bar printed 98.1 mm (feed scale 0.981, measured
+*% 2026-09-27). The default Resolution renders 207 rows per inch
+*% (round(203 / 0.981)) so the printed length comes out right; 203x203dpi is
+*% the uncorrected choice. The installer regenerates the default choice from
+*% --feed-scale (make -C cups ppd FEED_SCALE=...); this file is the template
+*% for feed scale 0.981.
+*%
 *FormatVersion:         "4.3"
-*FileVersion:           "1.0.0"
+*FileVersion:           "1.1.0"
 *LanguageVersion:       English
 *LanguageEncoding:      ISOLatin1
 *PCFileName:            "RW403BN.ppd"
@@ -135,8 +143,9 @@
 
 *OpenUI *Resolution/Resolution: PickOne
 *OrderDependency: 300 AnySetup *Resolution
-*DefaultResolution: 203dpi
-*Resolution 203dpi/203 dpi x 203 dpi: "<</HWResolution[203 203]/cupsBitsPerColor 8/cupsRowCount 8/cupsRowFeed 0/cupsRowStep 0/cupsColorSpace 0>>setpagedevice"
+*DefaultResolution: 203x207dpi
+*Resolution 203x207dpi/203 dpi, feed-corrected (0.981): "<</HWResolution[203 207]/cupsBitsPerColor 8/cupsRowCount 8/cupsRowFeed 0/cupsRowStep 0/cupsColorSpace 0>>setpagedevice"
+*Resolution 203x203dpi/203 dpi, uncorrected: "<</HWResolution[203 203]/cupsBitsPerColor 8/cupsRowCount 8/cupsRowFeed 0/cupsRowStep 0/cupsColorSpace 0>>setpagedevice"
 *CloseUI: *Resolution
 
 

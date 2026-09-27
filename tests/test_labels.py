@@ -1,9 +1,23 @@
-"""Tests for munbyn.labels: mm/dot conversion, presets, and size parsing."""
+"""Tests for munbyn.labels: mm/dot conversion, presets, size parsing, and
+feed_scale (this printer's mechanical feed-shortfall correction)."""
 from __future__ import annotations
 
 import pytest
+from PIL import Image
 
-from munbyn.labels import DPI, MAX_WIDTH_MM, PRESETS, LabelSize, mm_to_dots, parse_size
+from munbyn.labels import (
+    DPI,
+    FEED_SCALE_MAX,
+    FEED_SCALE_MIN,
+    MAX_WIDTH_MM,
+    PRESETS,
+    LabelSize,
+    apply_feed_scale,
+    mm_to_dots,
+    parse_size,
+    stretched_height_dots,
+    validate_feed_scale,
+)
 
 
 def test_dpi_is_203():
@@ -169,3 +183,59 @@ def test_parse_size_width_at_boundary_ok():
     # 108mm exactly should be accepted (limit is inclusive).
     result = parse_size("108x50mm")
     assert result.width_mm == pytest.approx(108.0)
+
+
+# ---------------------------------------------------------------------------
+# feed_scale: this printer's mechanical feed-shortfall correction
+# ---------------------------------------------------------------------------
+
+
+def test_feed_scale_bounds_are_0_9_to_1_1():
+    assert FEED_SCALE_MIN == 0.9
+    assert FEED_SCALE_MAX == 1.1
+
+
+def test_validate_feed_scale_accepts_1_0_and_in_range_values():
+    validate_feed_scale(1.0)
+    validate_feed_scale(0.981)
+    validate_feed_scale(0.9)
+    validate_feed_scale(1.1)
+
+
+@pytest.mark.parametrize("bad", [0.89, 1.11, 0.5, 2.0, 0.0])
+def test_validate_feed_scale_rejects_out_of_range(bad):
+    with pytest.raises(ValueError):
+        validate_feed_scale(bad)
+
+
+def test_stretched_height_dots_noop_at_1_0():
+    assert stretched_height_dots(1218, 1.0) == 1218
+    assert stretched_height_dots(0, 1.0) == 0
+
+
+def test_stretched_height_dots_matches_verified_4x6_job():
+    # The verified real-hardware job: 1218 physical rows -> 1242 stretched
+    # rows at feed_scale=0.981 (round(1218/0.981) = 1242).
+    assert stretched_height_dots(1218, 0.981) == 1242
+
+
+def test_stretched_height_dots_rounds():
+    assert stretched_height_dots(100, 0.981) == round(100 / 0.981)
+
+
+def test_apply_feed_scale_noop_returns_same_object_at_1_0():
+    img = Image.new("L", (10, 20), 255)
+    assert apply_feed_scale(img, 1.0) is img
+
+
+def test_apply_feed_scale_stretches_height_only():
+    img = Image.new("L", (100, 1218), 255)
+    out = apply_feed_scale(img, 0.981)
+    assert out.width == 100
+    assert out.height == 1242
+
+
+def test_apply_feed_scale_rejects_out_of_range():
+    img = Image.new("L", (10, 20), 255)
+    with pytest.raises(ValueError):
+        apply_feed_scale(img, 2.0)

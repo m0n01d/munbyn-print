@@ -13,6 +13,7 @@ import io
 import os
 import sys
 import threading
+from dataclasses import replace
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -59,11 +60,11 @@ _USB_LOCK = threading.Lock()
 
 # Settings that both the CLI and the web form understand, mapped by name to
 # the coercion applied to their raw (string) form-field values.
-_FLOAT_FIELDS = {"gap_mm", "gap_offset_mm", "offset_mm", "x_shift_mm", "y_shift_mm"}
+_FLOAT_FIELDS = {"gap_mm", "gap_offset_mm", "offset_mm", "x_shift_mm", "y_shift_mm", "feed_scale"}
 _INT_FIELDS = {"density", "speed", "direction", "threshold"}
 _SETTINGS_FORM_KEYS = (
     "size", "media", "gap_mm", "gap_offset_mm", "density", "speed",
-    "direction", "offset_mm", "x_shift_mm", "y_shift_mm",
+    "direction", "offset_mm", "x_shift_mm", "y_shift_mm", "feed_scale",
     "fit", "rotate", "crop", "dither", "threshold",
 )
 
@@ -98,10 +99,18 @@ def _settings_from_form(form: Any) -> Dict[str, Any]:
     return settings
 
 
-def _render_options_from_form(form: Any, settings: Dict[str, Any]) -> "render_mod.RenderOptions":
+def _render_options_from_form(
+    form: Any, settings: Dict[str, Any], feed_scale_override: Optional[float] = None
+) -> "render_mod.RenderOptions":
+    """Build RenderOptions from the form. ``feed_scale_override`` is used by
+    ``/api/preview`` to force an un-stretched (physical-size) preview
+    regardless of the configured feed_scale -- see that route."""
     scale = form.get("scale")
     margin = form.get("margin_mm")
     invert = form.get("invert")
+    feed_scale = (
+        feed_scale_override if feed_scale_override is not None else float(settings["feed_scale"])
+    )
     return render_mod.RenderOptions(
         fit=settings["fit"],
         scale=(float(scale) if scale not in (None, "") else None),
@@ -113,6 +122,7 @@ def _render_options_from_form(form: Any, settings: Dict[str, Any]) -> "render_mo
         threshold=int(settings["threshold"]),
         invert=bool(invert) and invert not in ("0", "false", "False"),
         pages=(form.get("pages") or None),
+        feed_scale=feed_scale,
     )
 
 
@@ -132,7 +142,18 @@ def _job_settings_from_form(form: Any, settings: Dict[str, Any], size: "labels_m
         y_shift_mm=float(settings["y_shift_mm"]),
         copies=copies,
         bitmap_black_is_one=bool(settings["bitmap_black_is_one"]),
+        feed_scale=float(settings["feed_scale"]),
     )
+
+
+def _unstretched(job_settings: "tspl_mod.JobSettings") -> "tspl_mod.JobSettings":
+    """``job_settings`` with ``feed_scale`` forced to 1.0, for previews that
+    should show the label as it will look on paper (physical size) rather
+    than the feed-scale-stretched bitmap actually sent -- mirrors
+    print_label.py's ``_unstretched``."""
+    if job_settings.feed_scale == 1.0:
+        return job_settings
+    return replace(job_settings, feed_scale=1.0)
 
 
 def create_app(test_mode: bool = False) -> Flask:
@@ -146,7 +167,12 @@ def create_app(test_mode: bool = False) -> Flask:
 
     @app.route("/")
     def index():
-        return render_template("index.html")
+        # feed_scale's saved default (from config, not hardcoded like the
+        # template's other fields) so the "advanced" field on the page
+        # reflects whatever was last saved with --save-defaults or the web
+        # form, not a compile-time constant.
+        feed_scale_default = config_mod.load().get("feed_scale", config_mod.DEFAULTS["feed_scale"])
+        return render_template("index.html", feed_scale_default=feed_scale_default)
 
     @app.route("/api/preview", methods=["POST"])
     def api_preview():
@@ -161,7 +187,11 @@ def create_app(test_mode: bool = False) -> Flask:
         try:
             settings = _settings_from_form(request.form)
             size = labels_mod.parse_size(str(settings["size"]))
-            opts = _render_options_from_form(request.form, settings)
+            # Preview always shows the label as it will look on paper
+            # (physical size, un-stretched), regardless of the configured
+            # feed_scale -- see --preview's help text in print_label.py for
+            # the same convention on the CLI side.
+            opts = _render_options_from_form(request.form, settings, feed_scale_override=1.0)
             pages = render_mod.render_file(data, size, opts, filename=upload.filename)
         except (ValueError, render_mod.RenderError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -222,13 +252,25 @@ def create_app(test_mode: bool = False) -> Flask:
         try:
             settings = _settings_from_form(request.form)
             size = labels_mod.parse_size(str(settings["size"]))
+            # Validate explicitly: the preview branch below forces feed_scale
+            # to 1.0 (always valid) before it's ever used, so an out-of-range
+            # value would otherwise sail through preview (200) while the
+            # print branch's selftest_job() -> header() -> validate_feed_scale
+            # raises ValueError uncaught (500) -- see the /api/scale-test
+            # route below for the same fix.
+            labels_mod.validate_feed_scale(float(settings["feed_scale"]))
             job_settings = _job_settings_from_form(request.form, settings, size)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
         preview_only = (request.form.get("preview") or "") in ("1", "true", "True")
         if preview_only:
-            img = tspl_mod.selftest_image(job_settings)
+            # Un-stretched (physical-size) preview -- see /api/preview.
+            try:
+                preview_settings = _unstretched(job_settings)
+                img = tspl_mod.selftest_image(preview_settings)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             encoded = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -238,7 +280,61 @@ def create_app(test_mode: bool = False) -> Flask:
                 "height_dots": size.height_dots,
             })
 
-        job = tspl_mod.selftest_job(job_settings)
+        try:
+            job = tspl_mod.selftest_job(job_settings)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if app.config["MUNBYN_TEST_MODE"]:
+            return jsonify({"ok": True, "dry_run": True, "describe": tspl_mod.describe(job)})
+
+        serial = request.form.get("serial") or None
+        try:
+            with _USB_LOCK:
+                with usb_transport.Printer(serial=serial) as printer:
+                    printer.write(job)
+        except usb_transport.PrinterError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 503
+
+        return jsonify({"ok": True, "pages": 1, "bytes": len(job)})
+
+    @app.route("/api/scale-test", methods=["POST"])
+    def api_scale_test():
+        """Preview or print the feed/x-alignment calibration label (no file
+        upload -- just the current label/printer settings, including
+        feed_scale). See munbyn.tspl.scale_test_image/scale_test_job."""
+        sec_err = _security_error(request)
+        if sec_err is not None:
+            return sec_err
+        try:
+            settings = _settings_from_form(request.form)
+            size = labels_mod.parse_size(str(settings["size"]))
+            # See the matching comment in /api/selftest: validate explicitly
+            # so preview and print reject the same out-of-range feed_scale.
+            labels_mod.validate_feed_scale(float(settings["feed_scale"]))
+            job_settings = _job_settings_from_form(request.form, settings, size)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        preview_only = (request.form.get("preview") or "") in ("1", "true", "True")
+        if preview_only:
+            try:
+                preview_settings = _unstretched(job_settings)
+                img = tspl_mod.scale_test_image(preview_settings)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+            return jsonify({
+                "pages": [f"data:image/png;base64,{encoded}"],
+                "width_dots": size.width_dots,
+                "height_dots": size.height_dots,
+            })
+
+        try:
+            job = tspl_mod.scale_test_job(job_settings)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         if app.config["MUNBYN_TEST_MODE"]:
             return jsonify({"ok": True, "dry_run": True, "describe": tspl_mod.describe(job)})
 

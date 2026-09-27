@@ -127,6 +127,15 @@
       <label>Y shift (mm) <input type="number" id="opt-y-shift-mm" step="0.1" value="0"></label>
       <label>Serial (optional) <input type="text" id="opt-serial" placeholder="filter by printer serial"></label>
     </fieldset>
+
+    <fieldset>
+      <legend>Advanced</legend>
+      <label title="Compensates for this printer's mechanical feed shortfall: stretches every job's bitmap height and SIZE length by 1/feed_scale before sending. 1.0 disables it. Use Scale-test to (re)calibrate.">
+        Feed scale
+        <input type="number" id="opt-feed-scale" step="0.001" min="0.9" max="1.1"
+               value="{{ '%.4f'|format(feed_scale_default) }}">
+      </label>
+    </fieldset>
   </section>
 
   <section class="actions">
@@ -134,6 +143,8 @@
     <button id="btn-print" type="button">Print</button>
     <button id="btn-selftest-preview" type="button">Self-test preview</button>
     <button id="btn-selftest-print" type="button">Self-test print</button>
+    <button id="btn-scaletest-preview" type="button">Scale-test preview</button>
+    <button id="btn-scaletest-print" type="button">Scale-test print</button>
     <span id="busy" class="busy" hidden>working&hellip;</span>
   </section>
 

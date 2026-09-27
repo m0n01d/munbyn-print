@@ -47,7 +47,19 @@ from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from .labels import LabelSize, mm_to_dots
+from .labels import (
+    DPI,
+    LabelSize,
+    apply_feed_scale,
+    mm_to_dots,
+    stretched_height_dots,
+    validate_feed_scale,
+)
+
+
+def _dots_to_mm(dots: int) -> float:
+    """Inverse of ``munbyn.labels.mm_to_dots`` (not rounded): dots -> mm."""
+    return dots * 25.4 / DPI
 
 
 @dataclass
@@ -66,6 +78,13 @@ class JobSettings:
     y_shift_mm: float = 0.0  # (+down)
     copies: int = 1
     bitmap_black_is_one: bool = False  # see module docstring
+    # Feed-axis correction for this printer's mechanical feed shortfall
+    # (measured printed-length / intended-length along the paper feed; see
+    # CLAUDE.md and munbyn.labels.apply_feed_scale/stretched_height_dots).
+    # 1.0 (default here) is a no-op -- every job path stays byte-identical to
+    # pre-feed-scale output; munbyn.config.DEFAULTS carries this printer's
+    # measured value (0.981).
+    feed_scale: float = 1.0
 
 
 #: The complete set of TSPL commands this firmware's USB path was verified to
@@ -95,9 +114,18 @@ SUPPORTED_COMMANDS: Tuple[str, ...] = (
 def header(s: JobSettings) -> bytes:
     """Build the SIZE..DIRECTION preamble, mirroring the vendor's job sequence.
 
-    Byte-identical (for default settings) to the job verified on real
-    hardware 2026-09-27 -- do not add ``SETC PAUSEKEY OFF`` or anything else
-    here without a fresh hardware verification.
+    Byte-identical (for default settings, ``feed_scale=1.0``) to the job
+    verified on real hardware 2026-09-27 -- do not add ``SETC PAUSEKEY OFF``
+    or anything else here without a fresh hardware verification.
+
+    The SIZE line's length (second number) is
+    ``round(s.size.height_mm / s.feed_scale)`` -- when ``feed_scale`` is this
+    printer's measured 0.981 (see CLAUDE.md), this asks for a slightly
+    *longer* label than the physical stock, matching the correspondingly
+    stretched bitmap height (``munbyn.labels.stretched_height_dots``) so the
+    two stay consistent. ``feed_scale=1.0`` reduces to plain
+    ``round(s.size.height_mm)``, unchanged from before this correction
+    existed.
     """
     if s.media not in ("gap", "bline", "continuous"):
         raise ValueError("media must be gap, bline or continuous, not {!r}".format(s.media))
@@ -109,8 +137,11 @@ def header(s: JobSettings) -> bytes:
         raise ValueError("direction must be 0 or 1, not {!r}".format(s.direction))
     if s.gap_mm < 0 or s.gap_offset_mm < 0 or s.offset_mm < 0:
         raise ValueError("gap, gap offset and offset must be >= 0")
+    validate_feed_scale(s.feed_scale)
     lines = [
-        "SIZE {} mm,{} mm".format(round(s.size.width_mm), round(s.size.height_mm)),
+        "SIZE {} mm,{} mm".format(
+            round(s.size.width_mm), round(s.size.height_mm / s.feed_scale)
+        ),
     ]
     if s.media == "continuous":
         lines.append("GAP 0,0")
@@ -175,9 +206,21 @@ def bitmap_command(x: int, y: int, img: Image.Image, black_is_one: bool) -> byte
 
 
 def _shift_and_bitmap(s: JobSettings, img: Image.Image) -> bytes:
-    """Apply x/y shift (cropping on the negative side) and emit its BITMAP."""
+    """Apply x/y shift (cropping on the negative side) and emit its BITMAP.
+
+    ``y_shift_mm`` is along the feed axis, so it goes through the same
+    ``1/feed_scale`` stretch as the bitmap height/``SIZE`` length (see
+    ``stretched_height_dots``) -- otherwise a shift meant to nudge the image
+    down by N mm on paper would move it by N mm of *unstretched* rows in a
+    canvas whose rows are already stretched, landing short of the intended
+    physical distance (and disagreeing with the C CUPS filter's ``Vertical``
+    option, which converts its shift with the feed-corrected resolution --
+    see ``cups/rastertotspl.c``). ``x_shift_mm`` is across the head, the axis
+    this printer needs no correction on, so it stays a plain
+    ``mm_to_dots``.
+    """
     x_dots = mm_to_dots(s.x_shift_mm)
-    y_dots = mm_to_dots(s.y_shift_mm)
+    y_dots = stretched_height_dots(mm_to_dots(s.y_shift_mm), s.feed_scale)
     crop_left = max(0, -x_dots)
     crop_top = max(0, -y_dots)
     if crop_left or crop_top:
@@ -186,9 +229,28 @@ def _shift_and_bitmap(s: JobSettings, img: Image.Image) -> bytes:
 
 
 def build_job(s: JobSettings, pages: List[Image.Image]) -> bytes:
-    """Build a full job: header once, then CLS/BITMAP/PRINT per page."""
+    """Build a full job: header once, then CLS/BITMAP/PRINT per page.
+
+    Every page's height must equal
+    ``munbyn.labels.stretched_height_dots(s.size.height_dots, s.feed_scale)``
+    -- i.e. pages must already be rendered (``munbyn.render.render_image``)
+    with this same ``feed_scale``, so the bitmap and the header's SIZE line
+    agree on the label's feed-axis length. A mismatch raises ``ValueError``
+    with the expected/actual heights rather than silently sending a job
+    whose bitmap doesn't match its own SIZE line.
+    """
     if s.copies < 1:
         raise ValueError("copies must be at least 1")
+    expected_height = stretched_height_dots(s.size.height_dots, s.feed_scale)
+    for i, page in enumerate(pages):
+        if page.height != expected_height:
+            raise ValueError(
+                "page {} is {} dots tall, but feed_scale={!r} requires pages "
+                "{} dots tall (label height_dots={} stretched by "
+                "1/feed_scale) -- render pages with this same feed_scale "
+                "(see munbyn.render.RenderOptions.feed_scale) before calling "
+                "build_job".format(i, page.height, s.feed_scale, expected_height, s.size.height_dots)
+            )
     parts = [header(s)]
     for page in pages:
         parts.append(b"CLS\r\n")
@@ -251,6 +313,13 @@ def selftest_image(s: JobSettings) -> Image.Image:
     nothing at all), so the self-test's border, mm rulers, crosshair and
     identifying text are all drawn as pixels with Pillow and shipped as one
     ``BITMAP``, exactly like ``build_job`` does for a rendered page.
+
+    Everything is drawn at the label's physical geometry (grayscale, "L"
+    mode); ``s.feed_scale`` is then applied (still grayscale, before the
+    final 1-bit conversion) exactly the way ``munbyn.render.render_image``
+    applies it to a rendered page, so the returned image's height is
+    ``munbyn.labels.stretched_height_dots(s.size.height_dots, s.feed_scale)``
+    -- unchanged from ``s.size.height_dots`` when ``feed_scale == 1.0``.
 
     Draws: a border inset 1 mm; ruler ticks every 5 mm along the top and
     left edges (10 mm ticks drawn longer); a center crosshair; identifying
@@ -381,6 +450,7 @@ def selftest_image(s: JobSettings) -> Image.Image:
             draw.rectangle([mx - arm, my, mx + arm + cross_w - 1, my + cross_w - 1], fill=0)
             draw.rectangle([mx, my - arm, mx + cross_w - 1, my + arm + cross_w - 1], fill=0)
 
+    img = apply_feed_scale(img, s.feed_scale)
     return img.convert("1", dither=Image.Dither.NONE)
 
 
@@ -394,11 +464,221 @@ def selftest_job(s: JobSettings) -> bytes:
     ``_shift_and_bitmap``) and ``copies``, so nudging alignment against the
     self-test and then ``--save-defaults`` actually changes what gets
     printed -- see the README's calibration steps. ``--preview``/the web
-    UI's self-test preview shows ``selftest_image()`` directly, which is
-    unshifted (the full label canvas), the same way a rendered page's own
-    preview doesn't reflect its shift either.
+    UI's self-test preview shows ``selftest_image()`` directly (unshifted --
+    the full label canvas, the same way a rendered page's own preview
+    doesn't reflect its shift either), called with ``feed_scale`` forced to
+    1.0 so the preview shows the label as it will look on paper rather than
+    the feed-scale-stretched bitmap this function actually sends -- see
+    ``print_label.py``/``web.py``.
     """
     img = selftest_image(s)
+    return (
+        header(s)
+        + b"CLS\r\n"
+        + _shift_and_bitmap(s, img)
+        + "PRINT 1,{}\r\n".format(s.copies).encode("ascii")
+    )
+
+
+#: Nominal left gap (mm) printed for scale-test bar A -- compare this
+#: against the *measured* left gap on paper to derive an ``--x-shift``
+#: correction: ``x_shift = SCALE_TEST_NOMINAL_LEFT_MM - measured_mm`` (a
+#: negative result nudges the image left, cropping it). Set comfortably
+#: above this printer's own measured ~3.1mm physical offset (see
+#: PLANS/PLAN.md) so that a plausible correction (around -3mm) still leaves a
+#: nonzero, measurable gap on the *confirmation* reprint instead of cropping
+#: bar A's start off the label entirely, which would make the printed
+#: "nominal left gap" unconfirmable by re-measuring. Not physically
+#: meaningful on its own; it only has to be a known, printed constant. See
+#: ``scale_test_image``.
+SCALE_TEST_NOMINAL_LEFT_MM = 5.0
+
+#: Target length of bar A (across the head), in millimeters. Shorter than
+#: ``SCALE_TEST_BAR_MM`` so that ``SCALE_TEST_NOMINAL_LEFT_MM`` + this bar +
+#: the printer's own ~3.1mm physical offset still fit within 4-inch-wide
+#: (101.39mm measured) stock instead of running off the label's right edge.
+#: The *actual* drawn length (which can still be shorter, on narrower stock)
+#: is what gets printed on the label -- see ``scale_test_image``.
+SCALE_TEST_BAR_A_MM = 90.0
+
+#: Target length of bar B (along the feed), in millimeters. Matches the
+#: caliper measurement this printer's feed_scale (0.981) was derived from:
+#: ``new_feed_scale = old_feed_scale * measured_mm / drawn_B_mm``, where
+#: ``drawn_B_mm`` is bar B's *actual* printed length -- printed on the label
+#: itself, since it can be shorter than this target on stock too short to
+#: fit the whole bar (see the README). Using this constant instead of the
+#: printed, possibly-clipped length would misread a merely-clipped bar as a
+#: large feed_scale error.
+SCALE_TEST_BAR_MM = 100.0
+
+
+def scale_test_bar_lengths(width_dots: int, height_dots: int) -> Tuple[int, int]:
+    """Return ``(a_len, b_len)`` in dots: the *actual* lengths
+    ``scale_test_image`` draws bar A and bar B at for a label this size,
+    after clipping each to what the label's own geometry allows (shorter
+    than ``SCALE_TEST_BAR_A_MM``/``SCALE_TEST_BAR_MM`` on small stock).
+    Exposed standalone (and used by ``scale_test_image`` itself) so the
+    drawn lengths can be checked directly, without pixel-scanning a
+    rendered image.
+    """
+    mm = mm_to_dots
+    width = max(1, width_dots)
+    height = max(1, height_dots)
+    thickness = max(1, mm(4.0))
+    tick_len = max(1, mm(2.0))
+    ax0 = min(mm(SCALE_TEST_NOMINAL_LEFT_MM), max(0, width - 2))
+    ay0 = min(mm(6.0), max(0, height - thickness - tick_len - 2))
+    a_len = max(0, min(mm(SCALE_TEST_BAR_A_MM), width - ax0 - 1))
+    bx0 = min(mm(6.0), max(0, width - thickness - tick_len - 2))
+    by0 = min(ay0 + thickness + tick_len + mm(6.0), max(0, height - 2))
+    b_len = max(0, min(mm(SCALE_TEST_BAR_MM), height - by0 - 1))
+    return a_len, b_len
+
+
+def scale_test_image(s: JobSettings) -> Image.Image:
+    """Draw the feed/x-alignment calibration label.
+
+    Two bars, each targeting a fixed length (``SCALE_TEST_BAR_A_MM`` for A,
+    ``SCALE_TEST_BAR_MM`` for B) with tick marks every 10mm plus one final
+    tick at the bar's true (possibly shorter) end:
+
+    * **"A across"** -- a horizontal bar spanning the print-head axis (the
+      axis this printer's hardware verification found accurate, 8 dots/mm),
+      printed starting ``SCALE_TEST_NOMINAL_LEFT_MM`` from the label's left
+      edge. Compare that printed nominal value against the *measured* left
+      gap on the printed label to derive an ``--x-shift`` correction: ``
+      x_shift = nominal - measured`` (the image lands a few mm right of the
+      label's left edge regardless of ``SIZE`` width -- not a firmware/
+      ``SIZE`` effect, tested and struck; attributed to how the label
+      physically sits in the printer -- see PLANS/PLAN.md).
+    * **"B along feed"** -- a vertical bar spanning the paper-feed axis, the
+      one this printer is mechanically short on. Measure its printed length
+      and compute ``new_feed_scale = old_feed_scale * measured_mm /
+      drawn_B_mm``, using the drawn length printed on the label (see below),
+      not a hardcoded 100.
+
+    Drawn at physical geometry in grayscale ("L" mode) exactly like
+    ``selftest_image``, then ``s.feed_scale`` is applied the same way
+    (still grayscale, before the final 1-bit conversion) -- so bar B prints
+    at its true drawn length once ``feed_scale`` is correct, the same as any
+    other job page. The current ``s.feed_scale`` value is printed on the
+    label itself so a photo of a printed label is self-describing.
+
+    Elements that don't fit a small label are shrunk or skipped, the same
+    defensive approach ``selftest_image`` uses, rather than raising or
+    drawing outside the canvas. On stock too narrow/short for a bar's full
+    target length, the bar itself is silently clipped to what fits (never
+    raised as an error -- this must stay safe to call for any label size,
+    including tiny ones), but the label always prints what was *actually*
+    drawn (mm) rather than repeating the target length as if the bar were
+    full-length, with a "(SHORT ...)" note when it's clipped -- otherwise
+    the printed caption would mislead whoever measures the bar, and the
+    recalibration formula above would misjudge a merely-clipped bar as a
+    large feed_scale error (found by review).
+    """
+    mm = mm_to_dots
+    width = max(1, s.size.width_dots)
+    height = max(1, s.size.height_dots)
+
+    img = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(img)
+    draw.fontmode = "1"
+
+    a_target = mm(SCALE_TEST_BAR_A_MM)
+    b_target = mm(SCALE_TEST_BAR_MM)
+    thickness = max(1, mm(4.0))
+    tick_len = max(1, mm(2.0))
+    tick_w = max(1, mm(0.3))
+    tick_pitch = max(1, mm(10.0))
+    a_len, b_len = scale_test_bar_lengths(width, height)
+
+    def _ticks(draw_tick, drawn_len):
+        # Regular ticks every 10mm, plus one final tick exactly at the bar's
+        # true end -- even when that's short of the target length -- so a
+        # clipped bar still shows visually where it actually stops instead
+        # of silently missing its would-be 100mm end cap.
+        k = 0
+        last_pos = None
+        while k * tick_pitch <= drawn_len:
+            pos = min(k * tick_pitch, max(0, drawn_len - tick_w))
+            draw_tick(pos)
+            last_pos = pos
+            k += 1
+        end_pos = max(0, drawn_len - tick_w)
+        if end_pos != last_pos:
+            draw_tick(end_pos)
+
+    # Bar A: across the head (horizontal), starting a known nominal inset
+    # from the left edge so that inset can be compared against a real
+    # caliper measurement of the printed left gap.
+    ax0 = min(mm(SCALE_TEST_NOMINAL_LEFT_MM), max(0, width - 2))
+    ay0 = min(mm(6.0), max(0, height - thickness - tick_len - 2))
+    if a_len > 0:
+        draw.rectangle([ax0, ay0, ax0 + a_len - 1, ay0 + thickness - 1], fill=0)
+
+        def _tick_a(pos):
+            x = ax0 + pos
+            draw.rectangle(
+                [x, ay0 + thickness, x + tick_w - 1, ay0 + thickness + tick_len - 1],
+                fill=0,
+            )
+
+        _ticks(_tick_a, a_len)
+
+    # Bar B: along the feed (vertical), below bar A's ticks.
+    bx0 = min(mm(6.0), max(0, width - thickness - tick_len - 2))
+    by0 = min(ay0 + thickness + tick_len + mm(6.0), max(0, height - 2))
+    if b_len > 0:
+        draw.rectangle([bx0, by0, bx0 + thickness - 1, by0 + b_len - 1], fill=0)
+
+        def _tick_b(pos):
+            y = by0 + pos
+            draw.rectangle(
+                [bx0 + thickness, y, bx0 + thickness + tick_len - 1, y + tick_w - 1],
+                fill=0,
+            )
+
+        _ticks(_tick_b, b_len)
+
+    # Identifying text, to the right of bar B / below bar A's ticks. Prints
+    # each bar's *actual* drawn length (mm), not its target, with a "(SHORT"
+    # note when clipping shortened it -- see the module-level docstring.
+    a_len_mm = _dots_to_mm(a_len)
+    b_len_mm = _dots_to_mm(b_len)
+    a_short = " (SHORT: label too narrow)" if a_len < a_target else ""
+    b_short = " (SHORT: label too short)" if b_len < b_target else ""
+    text_lines = [
+        "MUNBYN RW403B SCALE TEST",
+        "A across: {:.1f}mm bar{}, nominal left gap {:.2f}mm".format(
+            a_len_mm, a_short, SCALE_TEST_NOMINAL_LEFT_MM
+        ),
+        "B along feed: {:.1f}mm bar{}".format(b_len_mm, b_short),
+        "feed_scale={:.4f}".format(s.feed_scale),
+        datetime.date.today().isoformat(),
+    ]
+    text_x = bx0 + thickness + tick_len + mm(3.0)
+    text_top = ay0 + thickness + tick_len + mm(2.0)
+    font_px = max(6, mm(2.5))
+    font = _font(font_px)
+    _, lh = _text_wh(draw, "Xgy", font)
+    pitch = max(1, lh + max(2, lh // 4))
+    for i, content in enumerate(text_lines):
+        y = text_top + i * pitch
+        if y + lh > height - mm(1.0) or text_x >= width:
+            break
+        draw.text((text_x, y), content, fill=0, font=font)
+
+    img = apply_feed_scale(img, s.feed_scale)
+    return img.convert("1", dither=Image.Dither.NONE)
+
+
+def scale_test_job(s: JobSettings) -> bytes:
+    """Build the feed/x-alignment calibration job: header, ``CLS``, one
+    ``BITMAP`` for the whole label (see ``scale_test_image``), ``PRINT``.
+    Only commands in ``SUPPORTED_COMMANDS`` are ever emitted. Honours
+    ``x_shift_mm``/``y_shift_mm``/``copies`` like ``selftest_job`` (via
+    ``_shift_and_bitmap``)."""
+    img = scale_test_image(s)
     return (
         header(s)
         + b"CLS\r\n"

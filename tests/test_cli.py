@@ -199,6 +199,27 @@ def test_preview_output_is_written(tmp_path, sample_png):
     assert (tmp_path / "preview.png").exists()
 
 
+def test_stdin_input_with_preview_at_nondefault_feed_scale(tmp_path, sample_png, monkeypatch, capsys):
+    # Regression: reading "-" (stdin) with --preview and feed_scale != 1.0
+    # (the new default) re-rendered every source a second time for the
+    # un-stretched preview, so stdin's second read saw EOF and the whole job
+    # (including a real, non-test print) aborted with "error: empty input".
+    import io
+
+    class FakeStdin:
+        buffer = io.BytesIO(open(sample_png, "rb").read())
+
+    monkeypatch.setattr(print_label.sys, "stdin", FakeStdin())
+    rc = print_label.main(
+        ["-", "--test", "--size", "4x6", "--feed-scale", "0.981",
+         "--preview", str(tmp_path / "stdin-preview")]
+    )
+    err = capsys.readouterr().err
+    assert rc == 0, err
+    assert "empty input" not in err
+    assert (tmp_path / "stdin-preview.png").exists()
+
+
 # --- usage / input errors -> exit code 1 ------------------------------------
 
 
@@ -255,3 +276,106 @@ def test_selftest_preview_is_written(tmp_path, monkeypatch):
 
 def test_zero_copies_is_a_usage_error(sample_png, capsys):
     assert print_label.main([sample_png, "--test", "--copies", "0"]) == 1
+
+
+# --- feed_scale ---------------------------------------------------------
+
+
+def test_feed_scale_flag_stretches_size_line(capsys):
+    rc = print_label.main(["--selftest", "--test", "--size", "4x6", "--feed-scale", "0.981"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "SIZE 102 mm,155 mm" in out
+
+
+def test_feed_scale_1_0_disables_the_correction(capsys):
+    rc = print_label.main(["--selftest", "--test", "--size", "4x6", "--feed-scale", "1.0"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "SIZE 102 mm,152 mm" in out
+
+
+def test_no_feed_scale_flag_uses_this_printers_config_default(capsys):
+    # With no --feed-scale given and no saved config, munbyn.config.DEFAULTS'
+    # 0.981 (this printer, measured 2026-09-27) applies automatically.
+    rc = print_label.main(["--selftest", "--test", "--size", "4x6"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "SIZE 102 mm,155 mm" in out
+
+
+def test_feed_scale_out_of_range_is_a_usage_error(capsys):
+    rc = print_label.main(["--selftest", "--test", "--feed-scale", "2.0"])
+    assert rc == 1
+    assert "feed_scale" in capsys.readouterr().err
+
+
+def test_feed_scale_save_defaults_round_trips(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "saved.json"
+    monkeypatch.setenv("MUNBYN_CONFIG", str(cfg_path))
+    rc = print_label.main(
+        ["--selftest", "--test", "--feed-scale", "0.97", "--save-defaults"]
+    )
+    assert rc == 0
+    with cfg_path.open() as f:
+        saved = json.load(f)
+    assert saved["feed_scale"] == 0.97
+
+
+def test_preview_shows_unstretched_physical_size(tmp_path, sample_png):
+    preview_base = tmp_path / "preview"
+    rc = print_label.main(
+        [
+            sample_png, "--test", "--size", "4x6", "--feed-scale", "0.981",
+            "--preview", str(preview_base),
+        ]
+    )
+    assert rc == 0
+    from PIL import Image
+
+    img = Image.open(tmp_path / "preview.png")
+    # Physical (un-stretched) label size, not the feed-scale-stretched
+    # 1242-tall bitmap actually sent to the printer.
+    assert img.size == (812, 1218)
+
+
+def test_selftest_preview_shows_unstretched_physical_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(usb_transport, "Printer", _refuse_usb)
+    rc = print_label.main(
+        [
+            "--selftest", "--test", "--size", "4x6", "--feed-scale", "0.981",
+            "--preview", str(tmp_path / "st.png"),
+        ]
+    )
+    assert rc == 0
+    from PIL import Image
+
+    img = Image.open(tmp_path / "st.png")
+    assert img.size == (812, 1218)
+
+
+# --- --scale-test --------------------------------------------------------
+
+
+def test_scale_test_dry_run_describes_job_without_touching_usb(monkeypatch, capsys):
+    monkeypatch.setattr(usb_transport, "Printer", _refuse_usb)
+    rc = print_label.main(["--scale-test", "--test", "--size", "4x6", "--feed-scale", "0.981"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "SIZE 102 mm,155 mm" in out
+    assert "BITMAP" in out
+
+
+def test_scale_test_preview_is_unstretched(tmp_path, monkeypatch):
+    monkeypatch.setattr(usb_transport, "Printer", _refuse_usb)
+    rc = print_label.main(
+        [
+            "--scale-test", "--test", "--size", "4x6", "--feed-scale", "0.981",
+            "--preview", str(tmp_path / "sc.png"),
+        ]
+    )
+    assert rc == 0
+    from PIL import Image
+
+    img = Image.open(tmp_path / "sc.png")
+    assert img.size == (812, 1218)

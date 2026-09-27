@@ -8,6 +8,7 @@ with the same argv before doing anything else.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import sys
 from typing import Any, Dict, List, Optional
@@ -43,7 +44,7 @@ except ImportError as _import_exc:  # bare system python is missing a dependency
 # Config keys that both --flags and --save-defaults understand (a subset of
 # munbyn.config.DEFAULTS -- things like --copies/--margin/--pages/--invert/
 # --align are per-run only and are never persisted).
-_FLOAT_KEYS = ("gap_mm", "gap_offset_mm", "offset_mm", "x_shift_mm", "y_shift_mm")
+_FLOAT_KEYS = ("gap_mm", "gap_offset_mm", "offset_mm", "x_shift_mm", "y_shift_mm", "feed_scale")
 _INT_KEYS = ("density", "speed", "direction", "threshold")
 _STR_KEYS = ("size", "media", "fit", "rotate", "crop", "dither")
 
@@ -59,7 +60,10 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Build the job and print a description; never touch the USB device.")
     p.add_argument("--hex", metavar="PATH", help="Also write the raw TSPL job bytes to PATH.")
     p.add_argument("--preview", metavar="PATH",
-                    help="Save the rendered label as PATH.png (or PATH-1.png, PATH-2.png, ... for multiple pages).")
+                    help="Save the rendered label as PATH.png (or PATH-1.png, PATH-2.png, ... for "
+                         "multiple pages) -- shows the label as it will look on paper (physical size, "
+                         "un-stretched), not the feed-scale-stretched bitmap actually sent to the "
+                         "printer; see --feed-scale.")
 
     p.add_argument("--size", help='Label size, e.g. "4x6", "4x6in", "100x150mm", or a preset name.')
     p.add_argument("--media", choices=["gap", "bline", "continuous"])
@@ -72,6 +76,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--x-shift", dest="x_shift_mm", type=float, metavar="MM")
     p.add_argument("--y-shift", dest="y_shift_mm", type=float, metavar="MM")
     p.add_argument("--copies", type=int)
+    p.add_argument(
+        "--feed-scale", dest="feed_scale", type=float, metavar="F",
+        help="Compensate for this printer's mechanical feed shortfall: stretches every job's bitmap "
+             "height and SIZE length by 1/F before sending (F = measured printed length / intended "
+             "length along the paper feed; this printer measured 0.981 on 2026-09-27 -- see CLAUDE.md). "
+             "Must be 0.9..1.1; 1.0 disables the correction. Use --scale-test to (re)calibrate it.",
+    )
 
     p.add_argument("--fit", choices=["fit", "fill", "stretch", "actual"])
     p.add_argument("--scale", type=float, metavar="PERCENT", help='Like Preview\'s "Scale: N%%"; overrides --fit.')
@@ -87,6 +98,14 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Bitmap polarity override.")
 
     p.add_argument("--selftest", action="store_true", help="Print the built-in alignment/polarity test label.")
+    p.add_argument(
+        "--scale-test", action="store_true",
+        help="Print (or with --test: dry-run/--preview) a feed/x-alignment calibration label: a 100mm "
+             "bar across the head (\"A across\") and a 100mm bar along the feed (\"B along feed\"), each "
+             "with 10mm ticks, using the current --feed-scale. Measure B and set "
+             "--feed-scale $(old*B_mm/100); measure A's left gap against its printed nominal value and "
+             "set --x-shift. See the README's calibration section.",
+    )
     p.add_argument("--calibrate", action="store_true",
                     help="Print the manual gap/label calibration procedure; sends nothing to the "
                          "printer (this firmware ignores TSPL's GAPDETECT -- verified on hardware).")
@@ -124,6 +143,7 @@ def _cli_overrides(args: argparse.Namespace) -> Dict[str, Any]:
         "offset_mm": args.offset_mm,
         "x_shift_mm": args.x_shift_mm,
         "y_shift_mm": args.y_shift_mm,
+        "feed_scale": args.feed_scale,
         "fit": args.fit,
         "rotate": args.rotate,
         "crop": args.crop,
@@ -152,6 +172,7 @@ def _job_settings(settings: Dict[str, Any], size: "labels_mod.LabelSize", copies
         y_shift_mm=float(settings["y_shift_mm"]),
         copies=copies,
         bitmap_black_is_one=bool(settings["bitmap_black_is_one"]),
+        feed_scale=float(settings["feed_scale"]),
     )
 
 
@@ -167,6 +188,7 @@ def _render_options(settings: Dict[str, Any], args: argparse.Namespace) -> "rend
         threshold=int(settings["threshold"]),
         invert=bool(args.invert) if args.invert is not None else False,
         pages=args.pages,
+        feed_scale=float(settings["feed_scale"]),
     )
 
 
@@ -259,15 +281,35 @@ def _cmd_feed(args: argparse.Namespace, job_settings: "tspl_mod.JobSettings") ->
     return rc
 
 
+def _unstretched(job_settings: "tspl_mod.JobSettings") -> "tspl_mod.JobSettings":
+    """``job_settings`` with ``feed_scale`` forced to 1.0, for previews that
+    should show the label as it will look on paper (physical size) rather
+    than the feed-scale-stretched bitmap actually sent -- see --preview's
+    help text."""
+    if job_settings.feed_scale == 1.0:
+        return job_settings
+    return dataclasses.replace(job_settings, feed_scale=1.0)
+
+
 def _cmd_selftest(args: argparse.Namespace, job_settings: "tspl_mod.JobSettings") -> int:
     job = tspl_mod.selftest_job(job_settings)
     if args.preview:
-        # The self-test is a single BITMAP now, so the preview is the exact
-        # image sent, not an approximation.
-        _save_previews(args.preview, [tspl_mod.selftest_image(job_settings)])
+        # The self-test is a single BITMAP now, so (feed_scale aside) the
+        # preview is the exact image sent, not an approximation.
+        _save_previews(args.preview, [tspl_mod.selftest_image(_unstretched(job_settings))])
     rc = _finish_job(args, job)
     if rc == 0 and not args.test:
         print("Self-test label sent.")
+    return rc
+
+
+def _cmd_scale_test(args: argparse.Namespace, job_settings: "tspl_mod.JobSettings") -> int:
+    job = tspl_mod.scale_test_job(job_settings)
+    if args.preview:
+        _save_previews(args.preview, [tspl_mod.scale_test_image(_unstretched(job_settings))])
+    rc = _finish_job(args, job)
+    if rc == 0 and not args.test:
+        print("Scale-test label sent.")
     return rc
 
 
@@ -276,18 +318,38 @@ def _cmd_print_files(
 ) -> int:
     opts = _render_options(settings, args)
     all_pages: List[Any] = []
+    # Read each source's bytes exactly once (render_mod.load_bytes), then pass
+    # those bytes -- not the path/"-" again -- to every render_file() call for
+    # it. A file path is cheap to re-read, but "-" is stdin: reading it twice
+    # (once for the stretched render below, once more for an un-stretched
+    # --preview render) would see EOF on the second read and abort the whole
+    # job with "error: empty input" -- a regression --preview with feed_scale
+    # != 1.0 (the new default) used to hit even for a real (non --test) print.
+    sources: List[Any] = []  # (data: bytes, filename: Optional[str])
     for path in args.files:
-        pages = render_mod.render_file(
-            path, job_settings.size, opts, filename=(None if path == "-" else path)
-        )
-        all_pages.extend(pages)
+        data = render_mod.load_bytes(path)
+        filename = None if path == "-" else path
+        sources.append((data, filename))
+        all_pages.extend(render_mod.render_file(data, job_settings.size, opts, filename=filename))
 
     if not all_pages:
         print("error: nothing to print (no pages rendered)", file=sys.stderr)
         return 1
 
     if args.preview:
-        _save_previews(args.preview, all_pages)
+        # Show the label as it will look on paper (physical size), not the
+        # feed-scale-stretched bitmap actually sent -- see --preview's help
+        # text. Only re-renders when feed_scale actually changes anything.
+        if opts.feed_scale == 1.0:
+            preview_pages = all_pages
+        else:
+            preview_opts = dataclasses.replace(opts, feed_scale=1.0)
+            preview_pages = []
+            for data, filename in sources:
+                preview_pages.extend(
+                    render_mod.render_file(data, job_settings.size, preview_opts, filename=filename)
+                )
+        _save_previews(args.preview, preview_pages)
 
     job = tspl_mod.build_job(job_settings, all_pages)
 
@@ -311,6 +373,16 @@ def _run(args: argparse.Namespace) -> int:
     settings.update(overrides)
 
     if args.save_defaults and overrides:
+        if "feed_scale" in overrides:
+            # Validate before saving: a typo here (e.g. a stray percentage
+            # like 98 instead of 0.98) used to be written straight to disk,
+            # breaking every later run (CLI and web UI both load it as the
+            # default) until it was noticed and overwritten.
+            try:
+                labels_mod.validate_feed_scale(overrides["feed_scale"])
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
         config_mod.save(overrides)
 
     try:
@@ -336,9 +408,14 @@ def _run(args: argparse.Namespace) -> int:
             return _cmd_feed(args, job_settings)
         if args.selftest:
             return _cmd_selftest(args, job_settings)
+        if args.scale_test:
+            return _cmd_scale_test(args, job_settings)
         if args.files:
             return _cmd_print_files(args, settings, job_settings)
-        print("error: no file given (or use --selftest/--calibrate/--feed/--status/--list)", file=sys.stderr)
+        print(
+            "error: no file given (or use --selftest/--scale-test/--calibrate/--feed/--status/--list)",
+            file=sys.stderr,
+        )
         return 1
     except usb_transport.PrinterError as exc:
         print(f"error: {exc}", file=sys.stderr)

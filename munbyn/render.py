@@ -24,7 +24,7 @@ from typing import List, Optional, Union
 import pypdfium2 as pdfium
 from PIL import Image, ImageOps
 
-from munbyn.labels import DPI, LabelSize, mm_to_dots
+from munbyn.labels import DPI, LabelSize, apply_feed_scale, mm_to_dots, validate_feed_scale
 
 # Points-per-inch used by PDF canvas units; dots-per-point at native label DPI.
 _PT_PER_IN = 72.0
@@ -62,6 +62,11 @@ class RenderOptions:
     threshold: int = 160
     invert: bool = False
     pages: Optional[str] = None  # "1", "1-3,5"; None = all
+    # Feed-axis correction for this printer's mechanical feed shortfall (see
+    # munbyn.labels.apply_feed_scale / CLAUDE.md). 1.0 (default) is a no-op,
+    # which is what keeps rendering byte-identical to pre-feed-scale output;
+    # munbyn.config.DEFAULTS carries this printer's measured 0.981.
+    feed_scale: float = 1.0
 
 
 def parse_pages(spec: Optional[str], count: int) -> List[int]:
@@ -125,6 +130,20 @@ def _load_bytes(src: SourceType) -> bytes:
         raise RenderError("could not read %r: %s" % (src, exc)) from exc
 
 
+def load_bytes(src: SourceType) -> bytes:
+    """Public wrapper around ``_load_bytes``.
+
+    For a caller that needs to render the same source more than once (e.g.
+    ``print_label.py --preview`` rendering it again, un-stretched, alongside
+    the stretched job) -- read a source's bytes exactly once with this and
+    pass the resulting ``bytes`` to each ``render_file`` call. ``render_file``
+    accepts ``bytes`` directly (see ``SourceType``), so this avoids re-reading
+    ``"-"`` (stdin) a second time, which would see EOF and raise ``RenderError
+    ("empty input")`` on the second read.
+    """
+    return _load_bytes(src)
+
+
 def render_file(
     src: SourceType,
     size: LabelSize,
@@ -133,8 +152,13 @@ def render_file(
 ) -> List[Image.Image]:
     """Render a PDF/image source into one 1-bit PIL image per page/frame.
 
-    Every returned image is mode "1" and exactly
-    ``size.width_dots x size.height_dots``.
+    Every returned image is mode "1", ``size.width_dots`` wide, and
+    ``size.height_dots`` tall -- *unless* ``opts.feed_scale`` is not 1.0, in
+    which case the height is
+    ``munbyn.labels.stretched_height_dots(size.height_dots, opts.feed_scale)``
+    instead (stretched along the feed axis to compensate for this printer's
+    mechanical feed shortfall; see CLAUDE.md). ``munbyn.tspl.build_job``
+    validates pages against exactly that stretched height.
     """
     if opts is None:
         opts = RenderOptions()
@@ -505,11 +529,18 @@ def _validate(opts: RenderOptions) -> None:
         raise RenderError("scale must be a percentage between 0 and 5000, not %r" % opts.scale)
     if not 0 <= int(opts.threshold) <= 255:
         raise RenderError("threshold must be 0..255, not %r" % opts.threshold)
+    try:
+        validate_feed_scale(opts.feed_scale)
+    except ValueError as exc:
+        raise RenderError(str(exc)) from exc
     _resolve_rotation((1, 1), (1, 1), opts.rotate)  # raises on junk
 
 
 def render_image(img: Image.Image, size: LabelSize, opts: RenderOptions) -> Image.Image:
-    """Turn a PIL image into a 1-bit label bitmap, exactly `size` dots.
+    """Turn a PIL image into a 1-bit label bitmap, `size.width_dots` wide by
+    `size.height_dots` tall -- stretched to
+    `munbyn.labels.stretched_height_dots(size.height_dots, opts.feed_scale)`
+    tall instead when `opts.feed_scale` isn't 1.0 (see `apply_feed_scale`).
 
     Used both for directly-supplied images and for a rasterised PDF page.
     """
@@ -552,6 +583,13 @@ def render_image(img: Image.Image, size: LabelSize, opts: RenderOptions) -> Imag
 
     if opts.invert:
         canvas = ImageOps.invert(canvas)
+
+    # Feed-axis correction (see module-level import / CLAUDE.md): stretches
+    # the canvas's height while it's still grayscale, before dithering or
+    # thresholding collapse it to 1-bit. A feed_scale of 1.0 is a no-op, so
+    # the returned image stays exactly label-sized and byte-identical to
+    # pre-feed-scale output.
+    canvas = apply_feed_scale(canvas, opts.feed_scale)
 
     if opts.dither == "floyd":
         return canvas.convert("1")  # Pillow's default convert("1") is Floyd-Steinberg

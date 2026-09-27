@@ -12,9 +12,9 @@
  *
  * A job that also contained TEXT/BOX/BAR printed nothing at all, so never
  * add any other command here. The verified job for a 4x6in gap label at the
- * vendor PPD defaults (every line ends in CR LF):
+ * PPD defaults (every line ends in CR LF):
  *
- *   SIZE 102 mm,152 mm
+ *   SIZE 102 mm,155 mm
  *   GAP 3 mm,0 mm
  *   REFERENCE 0,0
  *   OFFSET 0 mm
@@ -23,8 +23,18 @@
  *   SPEED 4
  *   DIRECTION 0,0
  *   CLS
- *   BITMAP 0,0,102,1218,1,<124236 bytes>
+ *   BITMAP 0,0,102,1242,1,<126684 bytes>
  *   PRINT 1,1
+ *
+ * Feed correction (hardware-measured 2026-09-27): across the head the printer
+ * is exact (8 dots/mm), but along the feed an 800-row bar prints 98.1 mm
+ * long (feed scale 0.981, mechanical). So the PPD asks cgpdftoraster for
+ * HWResolution [203 207] (207 = round(203 / 0.981)): the page is rendered
+ * with 207 rows per inch, which this printer lays down as ~1 inch of paper.
+ * A 4x6 page is then 812 x 1242, and SIZE is the bitmap size in printer
+ * steps (1/203 in): 812 -> 102 mm, 1242 -> 155 mm -- the exact job above,
+ * which printed a 100 mm test bar at ~100 mm. The uncorrected 203x203dpi
+ * choice gives the older verified job, SIZE 102 mm,152 mm with 1218 rows.
  *
  * BITMAP data: rows top to bottom, MSB = leftmost dot, a CLEAR bit (0) prints
  * a BLACK dot, a set bit (1) is white; row padding bits are white.
@@ -38,11 +48,14 @@
  *   GapOffset   gap / black-line offset in mm (default 0)
  *   Darkness    1..16, emitted as DENSITY clamped to 0..15 (default 12)
  *   PrintSpeed  10..80 (PPD) or 1..8, emitted as SPEED 1..8 (default 40 -> 4)
- *   Horizontal  image shift in mm, + = right, negative crops (default 0)
- *   Vertical    image shift in mm, + = down, negative crops (default 0)
+ *   Horizontal  image shift in mm, + = right, negative crops (default 0);
+ *               converted with the horizontal resolution
+ *   Vertical    image shift in mm, + = down, negative crops (default 0);
+ *               converted with the vertical (feed) resolution
  *   Rotate      vendor codes 0=0, 2=90, 1=180, 3=270 degrees clockwise (or
  *               90/180/270). Done in the bitmap: DIRECTION stays 0,0, the only
- *               verified value.
+ *               verified value. 90/270 on a non-square raster (203x207) is
+ *               resampled so the page keeps its physical aspect ratio.
  *   PrintMode   5 threshold (default) | 4 error diffusion (Floyd-Steinberg) |
  *               2 dispersed ordered dither | 3 clustered ordered dither
  *   Threshold   1..255 on 0-255 luminance; darker than this prints black in
@@ -67,7 +80,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define DPI 203.0
+#define NATIVE_DPI 203        /* the head: 8 dots/mm, exact across the head */
+#define MAX_DPI 2400          /* sanity bound on HWResolution */
 #define MAX_WIDTH_MM 108      /* vendor PPD MaxMediaWidth 306.14pt = 4.25in */
 #define MAX_WIDTH_DOTS 864    /* 108 bytes per row */
 #define MAX_HEIGHT_DOTS 40000 /* ~197in; a sanity bound, not a media limit */
@@ -101,10 +115,16 @@ static void on_sigterm(int sig) {
   canceled = 1;
 }
 
-/* rint() rounds half to even in the default FP mode, like Python's round(),
- * so SIZE/GAP/offset math matches munbyn/tspl.py header() exactly. */
-static int mm_from_points(double pt) { return (int)rint(pt / 72.0 * 25.4); }
-static int dots_from_mm(double mm) { return (int)rint(mm / 25.4 * DPI); }
+/* rint() rounds half to even in the default FP mode, like Python's round(). */
+
+/* Raster dots/rows -> whole mm at `res` dots per inch (SIZE). */
+static int mm_from_dots(unsigned dots, unsigned res) {
+  return (int)rint((double)dots * 25.4 / res);
+}
+/* mm -> dots/rows at `res` dots per inch (the offsets). */
+static int dots_from_mm(double mm, unsigned res) {
+  return (int)rint(mm / 25.4 * res);
+}
 
 /* ---------------------------------------------------------------------- */
 /* Options                                                                */
@@ -291,6 +311,51 @@ static unsigned char rotated_pixel(const unsigned char *g, unsigned pw,
   }
 }
 
+/*
+ * The rotated page (rw x rh source pixels) drawn as tw x th label dots. Equal
+ * sizes (always, except 90/270 on a non-square-dpi raster) copy the pixel
+ * exactly; otherwise it is a bilinear resample of the gray image, before any
+ * thresholding, so the rotated page keeps its physical aspect ratio.
+ */
+static unsigned char sample_pixel(const unsigned char *g, unsigned pw,
+                                  unsigned ph, int rot, unsigned rw,
+                                  unsigned rh, unsigned tw, unsigned th,
+                                  unsigned x, unsigned y) {
+  double fx, fy, ax, ay, top, bot;
+  unsigned x0, y0, x1, y1;
+
+  if (tw == rw && th == rh)
+    return rotated_pixel(g, pw, ph, rot, x, y);
+
+  fx = ((double)x + 0.5) * rw / tw - 0.5;
+  fy = ((double)y + 0.5) * rh / th - 0.5;
+  if (fx < 0)
+    fx = 0;
+  if (fy < 0)
+    fy = 0;
+  x0 = (unsigned)fx;
+  y0 = (unsigned)fy;
+  if (x0 >= rw - 1) {
+    x0 = x1 = rw - 1;
+    ax = 0;
+  } else {
+    x1 = x0 + 1;
+    ax = fx - x0;
+  }
+  if (y0 >= rh - 1) {
+    y0 = y1 = rh - 1;
+    ay = 0;
+  } else {
+    y1 = y0 + 1;
+    ay = fy - y0;
+  }
+  top = (1 - ax) * rotated_pixel(g, pw, ph, rot, x0, y0) +
+        ax * rotated_pixel(g, pw, ph, rot, x1, y0);
+  bot = (1 - ax) * rotated_pixel(g, pw, ph, rot, x0, y1) +
+        ax * rotated_pixel(g, pw, ph, rot, x1, y1);
+  return (unsigned char)((1 - ay) * top + ay * bot + 0.5);
+}
+
 static const unsigned char BAYER8[8][8] = {
     {0, 32, 8, 40, 2, 34, 10, 42},  {48, 16, 56, 24, 50, 18, 58, 26},
     {12, 44, 4, 36, 14, 46, 6, 38}, {60, 28, 52, 20, 62, 30, 54, 22},
@@ -302,13 +367,14 @@ static const unsigned char CLUSTER4[4][4] = {
 
 /*
  * Build the label's packed BITMAP payload from the page's luminance image.
- * Label is lw x lh dots; content is the rotated page shifted by (dx, dy)
- * dots, cropped at the label edges, white elsewhere.
+ * Label is lw x lh dots; content is the rotated page (rw x rh source pixels,
+ * drawn as tw x th dots) shifted by (dx, dy) dots, cropped at the label
+ * edges, white elsewhere.
  */
 static void render_label(const unsigned char *gray, unsigned pw, unsigned ph,
                          const settings_t *s, unsigned rw, unsigned rh,
-                         unsigned lw, unsigned lh, int dx, int dy,
-                         unsigned char *bits, unsigned wb,
+                         unsigned tw, unsigned th, unsigned lw, unsigned lh,
+                         int dx, int dy, unsigned char *bits, unsigned wb,
                          unsigned char *lumrow, int *err_cur, int *err_next) {
   unsigned x, y;
 
@@ -322,11 +388,11 @@ static void render_label(const unsigned char *gray, unsigned pw, unsigned ph,
 
     for (x = 0; x < lw; x++) {
       long sx = (long)x - dx;
-      if (sy < 0 || sx < 0 || (unsigned long)sy >= rh || (unsigned long)sx >= rw)
+      if (sy < 0 || sx < 0 || (unsigned long)sy >= th || (unsigned long)sx >= tw)
         lumrow[x] = 255;
       else
-        lumrow[x] = rotated_pixel(gray, pw, ph, s->rotate, (unsigned)sx,
-                                  (unsigned)sy);
+        lumrow[x] = sample_pixel(gray, pw, ph, s->rotate, rw, rh, tw, th,
+                                 (unsigned)sx, (unsigned)sy);
     }
 
     if (s->print_mode == MODE_ERROR_DIFFUSION) {
@@ -464,8 +530,8 @@ int main(int argc, char *argv[]) {
   }
 
   while (!canceled && cupsRasterReadHeader2(ras, &h)) {
-    unsigned pw = h.cupsWidth, ph = h.cupsHeight, rw, rh, lw, lh, wb, y;
-    double wpt, hpt;
+    unsigned pw = h.cupsWidth, ph = h.cupsHeight, rw, rh, tw, th, lw, lh, wb, y;
+    unsigned xres = h.HWResolution[0], yres = h.HWResolution[1];
     int width_mm, height_mm, dx, dy, copies, hlen;
     char hdr[512], cmd[128];
     const char *why;
@@ -494,9 +560,19 @@ int main(int argc, char *argv[]) {
       status = 1;
       break;
     }
-    if (h.HWResolution[0] != 203 || h.HWResolution[1] != 203)
-      fprintf(stderr, "DEBUG: raster is %ux%u dpi, not 203; label will be "
-                      "mis-scaled\n", h.HWResolution[0], h.HWResolution[1]);
+    if (xres == 0 || yres == 0 || xres > MAX_DPI || yres > MAX_DPI) {
+      fprintf(stderr, "ERROR: page %u has unusable resolution %ux%u dpi\n",
+              page, xres, yres);
+      status = 1;
+      break;
+    }
+    if (xres != NATIVE_DPI)
+      fprintf(stderr, "DEBUG: raster is %u dpi across the head, not %d; label "
+                      "will be mis-scaled\n", xres, NATIVE_DPI);
+    if (yres != xres)
+      fprintf(stderr, "DEBUG: feed-corrected raster: %u rows per inch for a "
+                      "%u dpi head (feed scale %.4f)\n",
+              yres, xres, (double)xres / yres);
 
     free(line);
     free(gray);
@@ -520,20 +596,38 @@ int main(int argc, char *argv[]) {
     if (status || canceled)
       break;
 
-    /* Label geometry: the page size (points), rotated with the image. */
-    wpt = h.cupsPageSize[0] > 0 ? h.cupsPageSize[0] : h.PageSize[0];
-    hpt = h.cupsPageSize[1] > 0 ? h.cupsPageSize[1] : h.PageSize[1];
-    rw = pw;
-    rh = ph;
+    /*
+     * Label geometry comes from the raster, not from PageSize: columns are
+     * head dots at xres, rows are feed steps rendered at yres (207 for the
+     * feed-corrected 203x207 PPD choice). rw x rh is the rotated page in
+     * source pixels; tw x th is that page in label dots/rows. They differ
+     * only for 90/270 on a non-square raster, where the page's width (xres
+     * pixels) becomes the feed axis (yres rows) and vice versa.
+     */
+    rw = tw = pw;
+    rh = th = ph;
     if (s.rotate == 90 || s.rotate == 270) {
-      double t = wpt;
-      wpt = hpt;
-      hpt = t;
-      rw = ph;
-      rh = pw;
+      rw = tw = ph;
+      rh = th = pw;
+      if (xres != yres) {
+        double dtw = rint((double)ph * xres / yres);
+        double dth = rint((double)pw * yres / xres);
+        if (dtw < 1 || dth < 1 || dtw > 4 * MAX_WIDTH_DOTS ||
+            dth > MAX_HEIGHT_DOTS) {
+          fprintf(stderr, "ERROR: page %u: rotated page would be %.0fx%.0f "
+                          "dots\n", page, dtw, dth);
+          status = 1;
+          break;
+        }
+        tw = (unsigned)dtw;
+        th = (unsigned)dth;
+      }
     }
-    width_mm = mm_from_points(wpt);
-    height_mm = mm_from_points(hpt);
+    /* SIZE is the bitmap in printer steps (1/xres in, both axes): the
+     * firmware measures the feed in the same nominal 8 dots/mm steps, so a
+     * feed-corrected 4x6 (1242 rows) is "155 mm", as verified on paper. */
+    width_mm = mm_from_dots(tw, xres);
+    height_mm = mm_from_dots(th, xres);
     if (width_mm > MAX_WIDTH_MM) {
       /* Refuse rather than silently clamp+crop: for 90/270 this width is the
        * *rotated* page swapped into the SIZE line, and clamping it to
@@ -552,14 +646,14 @@ int main(int argc, char *argv[]) {
       status = 1;
       break;
     }
-    lw = rw > MAX_WIDTH_DOTS ? MAX_WIDTH_DOTS : rw;
-    if (lw != rw)
-      fprintf(stderr, "DEBUG: image %u dots wide > %u, right side cropped\n", rw,
+    lw = tw > MAX_WIDTH_DOTS ? MAX_WIDTH_DOTS : tw;
+    if (lw != tw)
+      fprintf(stderr, "DEBUG: image %u dots wide > %u, right side cropped\n", tw,
               MAX_WIDTH_DOTS);
-    lh = rh;
+    lh = th;
     wb = (lw + 7) / 8;
-    dx = dots_from_mm(s.h_offset_mm);
-    dy = dots_from_mm(s.v_offset_mm);
+    dx = dots_from_mm(s.h_offset_mm, xres);
+    dy = dots_from_mm(s.v_offset_mm, yres); /* rows: the feed resolution */
 
     free(bits);
     free(lumrow);
@@ -575,8 +669,8 @@ int main(int argc, char *argv[]) {
       status = 1;
       break;
     }
-    render_label(gray, pw, ph, &s, rw, rh, lw, lh, dx, dy, bits, wb, lumrow,
-                 err_a, err_b);
+    render_label(gray, pw, ph, &s, rw, rh, tw, th, lw, lh, dx, dy, bits, wb,
+                 lumrow, err_a, err_b);
 
     copies = h.NumCopies > 0 ? (int)h.NumCopies : argv_copies;
     if (copies > MAX_COPIES)

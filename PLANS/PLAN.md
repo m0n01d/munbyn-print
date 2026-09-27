@@ -19,6 +19,15 @@ The native CUPS queue path ("Munbyn RW403B (native)", `cups/`,
 different agent -- not covered by this file's authorship beyond linking to
 it from the README.
 
+**Update (2026-09-27, same day, conductor):** a second round of caliper
+measurements found this printer mechanically short along the paper feed
+(an 800-row bar printed at 98.1mm, not 100mm) -- see "Verified facts --
+feed/x-axis calibration" below. `feed_scale=0.981` now corrects for it
+end-to-end (render, self-test, `SIZE` line), **verified on paper**, and a
+new `--scale-test` calibration label exists to re-derive it. A competing
+hypothesis about fixing x-axis alignment via `SIZE` width was tested and
+struck; x-alignment stays on `--x-shift` alone.
+
 ## Verified facts -- real hardware print (2026-09-27, conductor, real 4x6 gap labels)
 
 1. **The BITMAP path prints correctly.** Exactly this job -- `SIZE 102
@@ -103,6 +112,64 @@ it from the README.
   track), and was deliberately **not** used as evidence for this repo's
   `BITMAP` bit polarity -- see the note in `munbyn/tspl.py`'s docstring.
 
+## Verified facts -- feed/x-axis calibration (2026-09-27, conductor, real
+printer, 4x6 gap labels, caliper measurements by Dwight)
+
+1. **Across the print head, the printer is accurate:** an 800-dot bar
+   printed at 8 dots/mm (100mm), matching the vendor PPD's 203 dpi within
+   caliper precision. No correction needed on this axis.
+2. **Along the paper feed, the printer is mechanically SHORT:** an 800-row
+   bar printed at **98.1mm**, not 100mm. `feed_scale = printed_length /
+   intended_length = 0.981`. Munbyn's own phone app (Bluetooth, a
+   completely different code path -- see the device-enumeration facts
+   above) showed the same *kind* of shortfall (Dwight measured 97.23mm
+   there) -- different magnitude, same direction, which is why this is
+   treated as a **mechanical** printer/feed-roller property, not a bug in
+   this repo's math or a quirk of the USB/TSPL path specifically.
+3. **The fix is verified on paper, not just in theory.** Stretching the
+   rendered image along the feed axis by `1/feed_scale` before sending it
+   printed a bar at ~100mm. The exact job that did it, using the sample
+   `ShedLab-labelsPLYWOOD.pdf`'s page 8 (a vertical 100mm bar with end
+   caps, git-excluded, kept only as a local dry-run fixture):
+   - page rendered at scale 203/72 -> 812x1218 gray (physical, 4x6 at
+     203dpi)
+   - resized in **grayscale**, height only, with **LANCZOS**, to
+     `round(1218 / 0.981) = 1242` rows (812 wide, unchanged) -- *before*
+     thresholding to 1-bit
+   - thresholded at 160
+   - sent as `SIZE 102 mm,155 mm` / `GAP 3 mm,0 mm` / `REFERENCE 0,0` /
+     `OFFSET 0 mm` / `SETC AUTODOTTED OFF` / `DENSITY 12` / `SPEED 4` /
+     `DIRECTION 0,0` / `CLS` / `BITMAP 0,0,102,1242,1,<data>` / `PRINT 1,1`
+     (all lines CRLF) -- one label, no extra feed.
+   - **General formulas** (now implemented as `munbyn.labels
+     .stretched_height_dots`/`apply_feed_scale`/`validate_feed_scale` and
+     used everywhere a job is built -- see `munbyn/tspl.py::header`,
+     `munbyn/render.py::render_image`, `munbyn/tspl.py::selftest_image`):
+     bitmap height = `round(label_height_dots / feed_scale)`; `SIZE`
+     length = `round(label_height_mm / feed_scale)` whole mm (`152.4/0.981
+     = 155.35 -> 155`); `SIZE` width and `GAP` are unchanged.
+4. **A follow-up dry run of the same page 8 confirms the math end-to-end**
+   (CLI defaults, and `--scale 100 --crop none` which reproduces the
+   verified job's own rendering path): both produce the identical header
+   above (`SIZE 102 mm,155 mm`, `BITMAP 0,0,102,1242,...`); the
+   `--scale 100 --crop none` run's bar measures **822 rows** outer-cap-to-
+   outer-cap in the stretched bitmap, matching this fact's "~822" estimate
+   for the verified job almost exactly (806 unstretched rows x
+   `1242/1218` stretch factor = 822.1). The CLI-defaults run (auto-crop +
+   `fit`, which scales the trimmed bar+caption-text bounding box to fill
+   the label rather than rendering at 1:1 physical scale) measures a
+   different, larger bar (~1020 rows) -- expected, not a discrepancy: it's
+   a different fit mode, not a different feed_scale bug.
+5. **X-axis alignment is a separate, already-handled concern.** The
+   image lands ~3.1mm right of the label's left edge regardless of `SIZE`
+   width (not a `SIZE`/firmware effect -- tested and struck, see below;
+   Dwight attributes it to how the label physically sits in the printer).
+   This repo
+   does not change any default to compensate; it's left to the existing
+   `--x-shift`, now with `--scale-test`'s "A across" bar (a nominal,
+   printed left-gap value to compare against a caliper measurement) to
+   help calibrate it per label stock.
+
 ## Decisions
 
 - **TSPL, not ESC/POS.** The device's own IEEE-1284 ID says `CMD:TSPL`; the
@@ -148,6 +215,34 @@ it from the README.
   via `osacompile` and links it into `~/Library/PDF Services`, instead of
   writing a shell script directly into that folder). Direct consequence of
   the struck-through "shell-script PDF service" assumption below.
+- **`feed_scale` corrects the printer's mechanical feed shortfall, applied
+  in exactly one place per concern.** `munbyn.config.DEFAULTS["feed_scale"]
+  = 0.981` (this printer, measured 2026-09-27 -- see the feed/x-axis
+  calibration facts above). `munbyn.labels.apply_feed_scale`/
+  `stretched_height_dots`/`validate_feed_scale` are the single shared
+  implementation, called from `munbyn.render.render_image` (PDFs and
+  images), `munbyn.tspl.selftest_image` and `munbyn.tspl.scale_test_image`
+  (still grayscale, before thresholding), and `munbyn.tspl.header` (the
+  `SIZE` length). `munbyn.tspl.build_job` validates every page's height
+  against the same stretched value, so a page rendered with a different
+  `feed_scale` than the `JobSettings` it's built with fails loudly instead
+  of silently shipping a bitmap that disagrees with its own `SIZE` line.
+  `feed_scale=1.0` is an exact no-op everywhere (byte-identical output to
+  before this correction existed) -- confirmed by a regression test against
+  the verified 4x6 job header and 1218 rows. `--preview`/the web UI's
+  preview always show the label **un-stretched** (physical size, as it
+  will look on paper), not the stretched bitmap actually sent -- see
+  `print_label.py`'s `--preview` help text.
+- **`--scale-test` (CLI) / `/api/scale-test` (web) print a two-bar
+  calibration label** ("A across" the head, target 90mm; "B along the
+  feed", target 100mm; both with 10mm ticks plus a final tick at the true
+  end, `feed_scale`'s current value printed on the label) using the
+  *current* `feed_scale`. Either bar is clipped (and the label says so) on
+  stock too small for its target length, so the label always prints each
+  bar's *actual* drawn length, not the target -- the recalibration formula
+  uses that printed length: measure B, `new_feed_scale = old_feed_scale *
+  measured_B_mm / drawn_B_mm`, `--feed-scale <new> --save-defaults`, re-run
+  `--scale-test` to confirm. See the README's calibration section.
 
 ## Struck-through wrong assumptions
 
@@ -185,12 +280,27 @@ it from the README.
   aliases to them) do still work**. What's not yet confirmed is this
   specific built app/symlink, end to end, against a real Print dialog -- test
   it before relying on it (see the README).
+- ~~Firmware centers the `SIZE` width on a 108mm head, so `SIZE 108 mm`
+  would move the image 3mm left, fixing the x-alignment offset.~~ **Killed
+  by:** real hardware, 2026-09-27 -- tested with `SIZE 108 mm` and the left
+  gap did not change at all. The image lands ~3.1mm right of the label's
+  left edge regardless (a bar with a nominal 0.75mm left gap measured
+  3.87mm; the label itself measures 101.39mm wide, not 108mm). Dwight
+  attributes the offset to how the label physically sits in the printer,
+  not to `SIZE`. X-alignment is left entirely to the existing `--x-shift`
+  (default unchanged); `--scale-test`'s "A across" bar exists to make that
+  offset measurable per label stock, not to eliminate the need for it.
 
 ## Open items
 
 - [x] **Bitmap polarity + alignment** -- confirmed via a real print
   2026-09-27 (`bitmap_black_is_one=False`). Still worth re-checking with
   `--selftest` after any stock change or on a different unit.
+- [x] **Feed-axis length (`feed_scale`)** -- confirmed via a real print
+  2026-09-27 (`feed_scale=0.981`, see the feed/x-axis calibration facts
+  above); `--scale-test` exists to re-derive it after a stock change or on
+  a different unit. X-axis alignment remains a separate, un-automated
+  concern (`--x-shift`, no default change).
 - [ ] **Gap calibration** -- no TSPL command works (see fact 3); the manual
   procedure (fact 4) hasn't yet been exercised end-to-end by an agent (only
   documented) -- a human should run through cover-close vs. feed-button

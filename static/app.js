@@ -96,6 +96,7 @@
       ["offset_mm", "opt-offset-mm"],
       ["x_shift_mm", "opt-x-shift-mm"],
       ["y_shift_mm", "opt-y-shift-mm"],
+      ["feed_scale", "opt-feed-scale"],
       ["serial", "opt-serial"],
     ];
     simple.forEach(([field, id]) => {
@@ -152,6 +153,7 @@
       ["offset_mm", "opt-offset-mm"],
       ["x_shift_mm", "opt-x-shift-mm"],
       ["y_shift_mm", "opt-y-shift-mm"],
+      ["feed_scale", "opt-feed-scale"],
       ["serial", "opt-serial"],
     ];
     simple.forEach(([field, id]) => {
@@ -263,6 +265,51 @@
         resultPane.appendChild(pre);
       } else {
         resultPane.textContent = `Self-test sent (${data.bytes} bytes).`;
+      }
+    } catch (err) {
+      resultPane.textContent = `Error: ${err.message}`;
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  document.getElementById("btn-scaletest-preview").addEventListener("click", async () => {
+    resultPane.textContent = "";
+    previewPane.innerHTML = "";
+    setBusy(true);
+    try {
+      const fd = settingsFormData();
+      fd.append("preview", "1");
+      const data = await postFormData("/api/scale-test", fd);
+      (data.pages || []).forEach((src) => {
+        const img = document.createElement("img");
+        img.src = src;
+        img.className = "label-preview";
+        previewPane.appendChild(img);
+      });
+      const dims = document.createElement("p");
+      dims.className = "dims";
+      dims.textContent = `${data.width_dots} × ${data.height_dots} dots`;
+      previewPane.appendChild(dims);
+    } catch (err) {
+      resultPane.textContent = `Error: ${err.message}`;
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  document.getElementById("btn-scaletest-print").addEventListener("click", async () => {
+    resultPane.textContent = "";
+    setBusy(true);
+    try {
+      const data = await postFormData("/api/scale-test", settingsFormData());
+      if (data.dry_run) {
+        resultPane.textContent = "Dry run (--test mode) -- nothing was sent to the printer:";
+        const pre = document.createElement("pre");
+        pre.textContent = data.describe;
+        resultPane.appendChild(pre);
+      } else {
+        resultPane.textContent = `Scale-test sent (${data.bytes} bytes).`;
       }
     } catch (err) {
       resultPane.textContent = `Error: ${err.message}`;

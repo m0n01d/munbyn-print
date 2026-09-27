@@ -5,9 +5,12 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from munbyn.labels import LabelSize, PRESETS, mm_to_dots, parse_size
+from munbyn.labels import LabelSize, PRESETS, mm_to_dots, parse_size, stretched_height_dots
 from munbyn.tspl import (
     CALIBRATION_INSTRUCTIONS,
+    SCALE_TEST_BAR_A_MM,
+    SCALE_TEST_BAR_MM,
+    SCALE_TEST_NOMINAL_LEFT_MM,
     STATUS_QUERY,
     SUPPORTED_COMMANDS,
     JobSettings,
@@ -21,6 +24,9 @@ from munbyn.tspl import (
     header,
     hexdump,
     pack_bitmap,
+    scale_test_bar_lengths,
+    scale_test_image,
+    scale_test_job,
     selftest_image,
     selftest_job,
     simulate,
@@ -45,6 +51,9 @@ def test_job_settings_defaults():
     assert s.copies == 1
     # TSC/EPL convention: a clear bit prints a dot (see module docstring).
     assert s.bitmap_black_is_one is False
+    # 1.0 = the feed-scale correction disabled (see munbyn.config.DEFAULTS
+    # for this printer's measured 0.981).
+    assert s.feed_scale == 1.0
 
 
 # --------------------------------------------------------------------------
@@ -259,6 +268,24 @@ def test_build_job_negative_y_shift_crops_and_places_at_zero():
     wb = size.width_dots // 8
     cropped_height = size.height_dots - mm_to_dots(5.0)
     assert "BITMAP 0,0,{},{},1,".format(wb, cropped_height).encode() in job
+
+
+def test_y_shift_is_feed_corrected_like_the_bitmap_height():
+    # Regression: y_shift_mm is along the feed axis, so it must be stretched
+    # by 1/feed_scale like the bitmap height/SIZE length -- otherwise a 10mm
+    # y-shift moved the image by only mm_to_dots(10) = 80 (unstretched) rows
+    # in a canvas whose rows are already feed-stretched, landing short of
+    # 10mm on paper, and disagreeing with the C CUPS filter's Vertical
+    # option (which converts its shift with the feed-corrected resolution).
+    size = LabelSize(50.0, 100.0, "t")
+    stretched_h = stretched_height_dots(size.height_dots, 0.981)
+    img = Image.new("1", (size.width_dots, stretched_h), 255)
+    s = JobSettings(size=size, y_shift_mm=10.0, feed_scale=0.981)
+    job = build_job(s, [img])
+    expected_y = stretched_height_dots(mm_to_dots(10.0), 0.981)
+    assert "BITMAP 0,{},".format(expected_y).encode() in job
+    # ~81-82 rows: close to the C filter's dots_from_mm(10, 207) = 81.
+    assert 79 <= expected_y <= 83
 
 
 # --------------------------------------------------------------------------
@@ -592,3 +619,215 @@ def test_selftest_image_never_crashes_on_extreme_aspect_ratios():
     ):
         img = selftest_image(JobSettings(size=size))
         assert img.size == (size.width_dots, size.height_dots)
+
+
+# --------------------------------------------------------------------------
+# feed_scale: header() SIZE length, build_job() page-height validation,
+# selftest_image()/scale_test_image() stretching
+# --------------------------------------------------------------------------
+
+
+def test_header_feed_scale_1_0_is_byte_identical_to_before():
+    # Regression: the feed_scale correction must not change a single byte of
+    # output when disabled.
+    s_default = JobSettings(size=PRESETS["4x6"])
+    s_explicit = JobSettings(size=PRESETS["4x6"], feed_scale=1.0)
+    expected = (
+        b"SIZE 102 mm,152 mm\r\n"
+        b"GAP 3 mm,0 mm\r\n"
+        b"REFERENCE 0,0\r\n"
+        b"OFFSET 0 mm\r\n"
+        b"SETC AUTODOTTED OFF\r\n"
+        b"DENSITY 12\r\n"
+        b"SPEED 4\r\n"
+        b"DIRECTION 0,0\r\n"
+    )
+    assert header(s_default) == expected
+    assert header(s_explicit) == expected
+
+
+def test_header_feed_scale_0_981_matches_verified_hardware_job():
+    # Exact job verified on paper 2026-09-27 (see PLANS/PLAN.md): SIZE
+    # length becomes round(152.4 / 0.981) = 155.
+    s = JobSettings(size=PRESETS["4x6"], feed_scale=0.981)
+    assert header(s) == (
+        b"SIZE 102 mm,155 mm\r\n"
+        b"GAP 3 mm,0 mm\r\n"
+        b"REFERENCE 0,0\r\n"
+        b"OFFSET 0 mm\r\n"
+        b"SETC AUTODOTTED OFF\r\n"
+        b"DENSITY 12\r\n"
+        b"SPEED 4\r\n"
+        b"DIRECTION 0,0\r\n"
+    )
+
+
+@pytest.mark.parametrize("bad", [0.5, 0.89, 1.11, 2.0])
+def test_header_rejects_out_of_range_feed_scale(bad):
+    s = JobSettings(size=PRESETS["4x6"], feed_scale=bad)
+    with pytest.raises(ValueError):
+        header(s)
+
+
+def test_build_job_accepts_pages_at_the_stretched_height():
+    size = PRESETS["4x6"]
+    s = JobSettings(size=size, feed_scale=0.981)
+    stretched_h = stretched_height_dots(size.height_dots, 0.981)
+    assert stretched_h == 1242
+    img = Image.new("1", (size.width_dots, stretched_h), 255)
+    job = build_job(s, [img])
+    width_bytes = (size.width_dots + 7) // 8
+    assert "BITMAP 0,0,{},{},1,".format(width_bytes, stretched_h).encode() in job
+
+
+def test_build_job_rejects_pages_at_the_unstretched_height():
+    # A page rendered without feed_scale (or with a different feed_scale)
+    # must not silently ship a bitmap that disagrees with the header's own
+    # SIZE line -- this is the exact failure mode the validation exists to
+    # catch, so it must raise a clear error rather than build a bad job.
+    size = PRESETS["4x6"]
+    s = JobSettings(size=size, feed_scale=0.981)
+    unstretched_img = Image.new("1", (size.width_dots, size.height_dots), 255)
+    with pytest.raises(ValueError, match="feed_scale"):
+        build_job(s, [unstretched_img])
+
+
+def test_build_job_feed_scale_1_0_still_requires_exact_height():
+    size = LabelSize(20.0, 20.0, "t")
+    s = JobSettings(size=size)  # feed_scale=1.0
+    wrong = Image.new("1", (size.width_dots, size.height_dots + 5), 255)
+    with pytest.raises(ValueError):
+        build_job(s, [wrong])
+
+
+def test_selftest_image_feed_scale_stretches_height():
+    size = PRESETS["4x6"]
+    s = JobSettings(size=size, feed_scale=0.981)
+    img = selftest_image(s)
+    assert img.width == size.width_dots
+    assert img.height == stretched_height_dots(size.height_dots, 0.981) == 1242
+
+
+def test_selftest_job_feed_scale_bitmap_matches_stretched_header():
+    size = PRESETS["4x6"]
+    s = JobSettings(size=size, feed_scale=0.981)
+    job = selftest_job(s)
+    assert b"SIZE 102 mm,155 mm" in job
+    width_bytes = (size.width_dots + 7) // 8
+    assert "BITMAP 0,0,{},{},1,".format(width_bytes, 1242).encode() in job
+
+
+# --------------------------------------------------------------------------
+# scale_test_image() / scale_test_job(): feed/x-alignment calibration label
+# --------------------------------------------------------------------------
+
+
+def test_scale_test_job_only_uses_supported_commands():
+    for size in list(PRESETS.values()) + [parse_size("0.6x0.6in"), parse_size("1x1in")]:
+        _assert_only_supported_commands(scale_test_job(JobSettings(size=size, feed_scale=0.981)))
+
+
+def test_scale_test_image_is_label_sized_at_feed_scale_1_0():
+    size = PRESETS["4x6"]
+    img = scale_test_image(JobSettings(size=size))
+    assert img.mode == "1"
+    assert img.size == (size.width_dots, size.height_dots)
+
+
+def test_scale_test_image_stretches_with_feed_scale():
+    size = PRESETS["4x6"]
+    img = scale_test_image(JobSettings(size=size, feed_scale=0.981))
+    assert img.width == size.width_dots
+    assert img.height == stretched_height_dots(size.height_dots, 0.981)
+
+
+def _max_contiguous_dark_run(values) -> int:
+    best = cur = 0
+    for v in values:
+        if v == 0:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return best
+
+
+def test_scale_test_image_draws_bar_a_across_the_head():
+    # A size wide enough that bar A's target length plus its nominal left
+    # inset isn't clipped by the label's own width (4x6 is only 101.6mm
+    # wide, barely too narrow for a 5mm inset + 90mm bar).
+    size = LabelSize(108.0, 150.0, "wide")
+    img = scale_test_image(JobSettings(size=size))
+    # Scan a band of rows near the top where bar A (a few mm thick) lives;
+    # the longest contiguous dark run in any of those rows is bar A itself.
+    band = range(mm_to_dots(4.0), mm_to_dots(12.0))
+    longest = max(
+        _max_contiguous_dark_run(img.getpixel((x, y)) for x in range(img.width)) for y in band
+    )
+    assert longest == pytest.approx(mm_to_dots(SCALE_TEST_BAR_A_MM), abs=2)
+
+
+def test_scale_test_image_draws_bar_b_along_the_feed():
+    size = LabelSize(108.0, 150.0, "wide")
+    img = scale_test_image(JobSettings(size=size))
+    # Scan a band of columns near the left edge where bar B lives; the
+    # longest contiguous dark run in any of those columns is bar B itself
+    # (bar A's own body/ticks up top are separated from it by a gap, so
+    # they never merge into one longer run).
+    band = range(mm_to_dots(4.0), mm_to_dots(12.0))
+    longest = max(
+        _max_contiguous_dark_run(img.getpixel((x, y)) for y in range(img.height)) for x in band
+    )
+    assert longest == pytest.approx(mm_to_dots(SCALE_TEST_BAR_MM), abs=2)
+
+
+def test_scale_test_image_never_crashes_on_any_preset_or_extreme_size():
+    for size in list(PRESETS.values()) + [
+        parse_size("0.6x0.6in"),
+        LabelSize(15.0, 100.0, "thin-tall"),
+        LabelSize(100.0, 15.0, "thin-wide"),
+    ]:
+        img = scale_test_image(JobSettings(size=size, feed_scale=0.981))
+        assert img.size[0] == size.width_dots
+
+
+def test_scale_test_constants():
+    assert SCALE_TEST_BAR_MM == 100.0
+    assert SCALE_TEST_BAR_A_MM == 90.0
+    # Comfortably above this printer's measured ~3.1mm physical x-offset, so
+    # a plausible --x-shift correction (around -3mm) doesn't crop bar A's
+    # nominal-left-gap start off the label -- see the constant's docstring.
+    assert SCALE_TEST_NOMINAL_LEFT_MM > 3.1
+
+
+def test_scale_test_bar_lengths_clip_to_what_the_label_allows():
+    # Regression: the label used to always caption "100mm bar" even when a
+    # bar was clipped short by the label's own geometry -- misleading
+    # whoever measures it and breaking the feed_scale recalibration formula,
+    # which needs the bar's true printed length, not the 100mm target.
+    size = PRESETS["4x6"]
+    a_len, b_len = scale_test_bar_lengths(size.width_dots, size.height_dots)
+    assert a_len == pytest.approx(mm_to_dots(SCALE_TEST_BAR_A_MM), abs=1)  # fits: unclipped
+    assert b_len == pytest.approx(mm_to_dots(SCALE_TEST_BAR_MM), abs=1)  # fits: unclipped
+
+    size = parse_size("4x4in")  # too short for a 100mm bar along the feed
+    a_len, b_len = scale_test_bar_lengths(size.width_dots, size.height_dots)
+    assert a_len == pytest.approx(mm_to_dots(SCALE_TEST_BAR_A_MM), abs=1)  # width unaffected
+    assert b_len < mm_to_dots(SCALE_TEST_BAR_MM) - mm_to_dots(5.0)  # clipped, not just close
+
+    # scale_test_image() draws exactly these lengths (checked by pixel scan
+    # in test_scale_test_image_draws_bar_b_along_the_feed and friends) and
+    # captions them with the same _dots_to_mm conversion the label's "B
+    # along feed: {mm}mm bar" line uses.
+    from munbyn.tspl import _dots_to_mm
+
+    assert _dots_to_mm(mm_to_dots(100.0)) == pytest.approx(100.0, abs=0.2)
+
+
+def test_scale_test_job_honours_x_and_y_shift_and_copies():
+    size = PRESETS["2x1"]
+    s = JobSettings(size=size, x_shift_mm=3.0, copies=2)
+    job = scale_test_job(s)
+    x_dots = mm_to_dots(3.0)
+    assert "BITMAP {},0,".format(x_dots).encode() in job
+    assert job.rstrip(b"\r\n").endswith(b"PRINT 1,2")

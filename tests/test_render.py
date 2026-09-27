@@ -7,7 +7,7 @@ import pytest
 from PIL import Image, ImageOps
 
 from conftest import BARCODE_BAR_WIDTHS, build_pdf, dark_bbox, pdf_rect_fill
-from munbyn.labels import PRESETS, LabelSize
+from munbyn.labels import PRESETS, LabelSize, mm_to_dots, stretched_height_dots
 from munbyn.render import RenderError, RenderOptions, parse_pages, render_file, render_image
 
 LABEL_4X6 = PRESETS["4x6"]
@@ -445,3 +445,57 @@ def test_image_auto_crop_trims_white_page_around_label():
 def test_bad_options_raise_render_error(full_bleed_square_png, opts):
     with pytest.raises(RenderError):
         render_file(full_bleed_square_png, LABEL_4X6, opts)
+
+
+# ---------------------------------------------------------------------------
+# feed_scale: this printer's mechanical feed-shortfall correction
+# ---------------------------------------------------------------------------
+
+
+def test_feed_scale_default_is_a_noop(full_bleed_square_png):
+    default_opts = render_file(full_bleed_square_png, LABEL_4X6, RenderOptions())[0]
+    explicit_1_0 = render_file(full_bleed_square_png, LABEL_4X6, RenderOptions(feed_scale=1.0))[0]
+    assert default_opts.size == (LABEL_4X6.width_dots, LABEL_4X6.height_dots)
+    assert list(default_opts.getdata()) == list(explicit_1_0.getdata())
+
+
+def test_feed_scale_stretches_output_height_only(full_bleed_square_png):
+    out = render_file(full_bleed_square_png, LABEL_4X6, RenderOptions(feed_scale=0.981))[0]
+    assert out.width == LABEL_4X6.width_dots
+    assert out.height == stretched_height_dots(LABEL_4X6.height_dots, 0.981) == 1242
+
+
+def test_feed_scale_out_of_range_raises(full_bleed_square_png):
+    with pytest.raises(RenderError):
+        render_file(full_bleed_square_png, LABEL_4X6, RenderOptions(feed_scale=2.0))
+    with pytest.raises(RenderError):
+        render_file(full_bleed_square_png, LABEL_4X6, RenderOptions(feed_scale=0.5))
+
+
+def _mm_to_pt(mm: float) -> float:
+    return mm / 25.4 * 72.0
+
+
+def test_pdf_100mm_bar_along_feed_stretches_to_expected_rows():
+    # A 20x100mm bar, centered on a page sized exactly like a 50x150mm
+    # label, rendered at true physical size (fit="actual", crop="none").
+    label = LabelSize(50.0, 150.0, "t")
+    page_w_pt, page_h_pt = _mm_to_pt(label.width_mm), _mm_to_pt(label.height_mm)
+    bar_w_pt, bar_h_pt = _mm_to_pt(20.0), _mm_to_pt(100.0)
+    x = (page_w_pt - bar_w_pt) / 2
+    y = (page_h_pt - bar_h_pt) / 2
+    pdf = build_pdf([(page_w_pt, page_h_pt, pdf_rect_fill(x, y, bar_w_pt, bar_h_pt))])
+
+    unstretched = render_file(pdf, label, RenderOptions(fit="actual", crop="none", rotate="0"))[0]
+    raw_rows = dark_bbox(unstretched)[3] - dark_bbox(unstretched)[1]
+    # Sanity: the un-stretched bar is close to the nominal 100mm dot count.
+    assert raw_rows == pytest.approx(mm_to_dots(100.0), abs=2)
+
+    stretched = render_file(
+        pdf, label, RenderOptions(fit="actual", crop="none", rotate="0", feed_scale=0.981)
+    )[0]
+    stretched_rows = dark_bbox(stretched)[3] - dark_bbox(stretched)[1]
+    # PLAN.md's calibration job: round(800/0.981) = 815 (+/-1 for rounding
+    # noise from LANCZOS resampling then re-thresholding).
+    assert stretched_rows == pytest.approx(round(800 / 0.981), abs=1)
+    assert stretched.height == stretched_height_dots(label.height_dots, 0.981)

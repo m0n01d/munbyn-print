@@ -321,6 +321,160 @@ def test_status_never_sends_the_tspl_status_query(monkeypatch):
     assert data["status"] is None
 
 
+def test_index_shows_saved_feed_scale_default(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert b'id="opt-feed-scale"' in resp.data
+    assert b"0.9810" in resp.data  # config.DEFAULTS["feed_scale"], no saved config yet
+
+
+def test_print_dry_run_reflects_feed_scale(client, sample_png_bytes):
+    resp = client.post(
+        "/api/print",
+        data={
+            "file": (io.BytesIO(sample_png_bytes), "sample.png"),
+            "size": "4x6",
+            "feed_scale": "0.981",
+        },
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "SIZE 102 mm,155 mm" in data["describe"]
+
+
+def test_preview_ignores_feed_scale_shows_physical_size(client, sample_png_bytes):
+    # /api/preview always shows the label as it will look on paper, even
+    # when feed_scale would otherwise stretch the job's actual bitmap.
+    import base64
+
+    resp = client.post(
+        "/api/preview",
+        data={
+            "file": (io.BytesIO(sample_png_bytes), "sample.png"),
+            "size": "4x6",
+            "feed_scale": "0.981",
+        },
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    png_bytes = base64.b64decode(data["pages"][0].split(",", 1)[1])
+    from PIL import Image
+    import io as _io
+
+    img = Image.open(_io.BytesIO(png_bytes))
+    assert img.size == (812, 1218)
+
+
+def test_selftest_preview_ignores_feed_scale_shows_physical_size(client):
+    import base64
+
+    resp = client.post(
+        "/api/selftest",
+        data={"size": "4x6", "feed_scale": "0.981", "preview": "1"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    png_bytes = base64.b64decode(data["pages"][0].split(",", 1)[1])
+    from PIL import Image
+    import io as _io
+
+    img = Image.open(_io.BytesIO(png_bytes))
+    assert img.size == (812, 1218)
+
+
+def test_feed_scale_out_of_range_is_400(client, sample_png_bytes):
+    resp = client.post(
+        "/api/print",
+        data={
+            "file": (io.BytesIO(sample_png_bytes), "sample.png"),
+            "size": "4x6",
+            "feed_scale": "2.0",
+        },
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 400
+    assert "feed_scale" in resp.get_json()["error"]
+
+
+def test_scale_test_dry_run_describes_job(client):
+    resp = client.post(
+        "/api/scale-test",
+        data={"size": "4x6", "feed_scale": "0.981"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["dry_run"] is True
+    assert "SIZE 102 mm,155 mm" in data["describe"]
+    assert "BITMAP" in data["describe"]
+
+
+def test_scale_test_preview_shows_physical_size(client):
+    import base64
+
+    resp = client.post(
+        "/api/scale-test",
+        data={"size": "4x6", "feed_scale": "0.981", "preview": "1"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    png_bytes = base64.b64decode(data["pages"][0].split(",", 1)[1])
+    from PIL import Image
+    import io as _io
+
+    img = Image.open(_io.BytesIO(png_bytes))
+    assert img.size == (812, 1218)
+
+
+def test_scale_test_requires_munbyn_header(client):
+    resp = client.post("/api/scale-test", data={"size": "4x6"}, content_type="multipart/form-data")
+    assert resp.status_code == 403
+
+
+def test_scale_test_writes_to_mocked_printer_when_not_test_mode(monkeypatch):
+    app = web.create_app(test_mode=False)
+    client = app.test_client()
+    written = {}
+
+    class FakePrinter:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def write(self, data, chunk_size=4096):
+            written["data"] = data
+            return len(data)
+
+    monkeypatch.setattr(usb_transport, "Printer", FakePrinter)
+    resp = client.post(
+        "/api/scale-test",
+        data={"size": "4x6"},
+        content_type="multipart/form-data",
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["bytes"] > 0
+    assert written["data"]
+
+
 def test_oversize_upload_returns_413(client):
     max_len = client.application.config["MAX_CONTENT_LENGTH"]
     big = b"0" * (max_len + 1024)

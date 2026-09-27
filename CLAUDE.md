@@ -39,13 +39,34 @@ exist in the vendor filter binary (`SETC PAUSEKEY OFF`, and a compressed
 `BITMAP x,y,wb,h,3,len,<data>` mode that links libz) but are **untested** and
 must not be used without a fresh hardware verification.
 
+## Feed-axis length is mechanically wrong on this printer (hardware-verified 2026-09-27)
+
+Across the print head this printer is accurate (800 dots = 100mm), but along
+the paper feed it's mechanically short: an 800-row bar printed at 98.1mm, not
+100mm. `feed_scale = printed_length / intended_length = 0.981` corrects for
+it -- stretching a job's bitmap height (and the header's `SIZE` length) by
+`1/feed_scale` before sending, **verified on paper**. `munbyn.config.DEFAULTS
+["feed_scale"]` carries this printer's measured value; `munbyn.labels
+.apply_feed_scale`/`stretched_height_dots`/`validate_feed_scale` are the one
+shared implementation every job path (`munbyn.render.render_image`,
+`munbyn.tspl.selftest_image`, `munbyn.tspl.scale_test_image`,
+`munbyn.tspl.header`) goes through -- `feed_scale=1.0` is an exact no-op, so
+this stays invisible unless you go looking for it. `--scale-test` prints a
+two-bar calibration label to re-derive `feed_scale` (and to make the
+separate, already-known x-axis alignment offset measurable via `--x-shift`)
+after a stock change or on a different unit -- see the README. Do not
+conflate the two axes: the x-offset is NOT a `SIZE`-width effect (tested and
+struck -- see PLANS/PLAN.md), so it is never "fixed" by changing `SIZE`.
+
 ## Module map
 
 - `print_label.py` -- CLI entry (argparse), thin
 - `web.py` -- Flask entry, the same options over HTTP
-- `munbyn/labels.py` -- label sizes, mm/dot conversion, size parsing
+- `munbyn/labels.py` -- label sizes, mm/dot conversion, size parsing,
+  `feed_scale` helpers (`stretched_height_dots`, `apply_feed_scale`,
+  `validate_feed_scale`)
 - `munbyn/tspl.py` -- TSPL command builder (header, bitmap, jobs, status decode,
-  `SUPPORTED_COMMANDS`)
+  `SUPPORTED_COMMANDS`, `scale_test_image`/`scale_test_job`)
 - `munbyn/usb_transport.py` -- pyusb transport (`Printer`, `find_printers`)
 - `munbyn/render.py` -- PDF/image to 1-bit label bitmap
 - `munbyn/config.py` -- `~/.config/munbyn-print/config.json` persistence

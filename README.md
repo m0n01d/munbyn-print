@@ -106,6 +106,14 @@ python3 print_label.py label.png --size 2.25x1.25 --media bline --gap 3.2 --dens
 # see the firmware quirk above)
 python3 print_label.py --selftest
 
+# Feed/x-alignment calibration label (100mm bar across the head, 100mm bar
+# along the feed, both with 10mm ticks); see Calibration below
+python3 print_label.py --scale-test
+
+# Compensate for this printer's mechanical feed shortfall (see Calibration);
+# 1.0 disables it -- this printer's measured value is already the default
+python3 print_label.py label.pdf --feed-scale 0.981
+
 # Manual gap/label calibration procedure; sends nothing to the printer
 python3 print_label.py --calibrate
 
@@ -123,6 +131,13 @@ scripts/install-pdf-service.sh
 
 ## Calibration
 
+There are three, mostly independent things to calibrate: **gap/label
+identification** (a manual, physical procedure -- no TSPL command for it),
+**bitmap polarity/alignment** (`--selftest`), and **feed-axis length /
+x-alignment** (`--scale-test`, this printer's own mechanical quirks).
+
+### Gap/label identification (cover-close or feed button)
+
 There is no TSPL command this firmware honours for gap/label calibration --
 `GAPDETECT` was sent alone to real hardware and verified to do nothing.
 `print_label.py --calibrate` (or the RW403B manual) instead:
@@ -137,19 +152,97 @@ two beeps) prints the printer's own self-test page; hold to three beeps
 (~6s) resets it. LED: green = ready, blue = Bluetooth connected, red = label
 not identified or cover open, flashing green+red = print head overheated.
 
-Separately, this project's own `--selftest` prints an **alignment/polarity**
-test label (border, mm rulers, crosshair, and a "LEFT HALF SHOULD BE BLACK"
-polarity swatch), useful after calibration or a stock change:
+### Bitmap polarity / rough alignment (`--selftest`)
+
+`--selftest` prints an **alignment/polarity** test label (border, mm rulers,
+crosshair, and a "LEFT HALF SHOULD BE BLACK" polarity swatch), useful after
+calibration or a stock change:
 
 1. `python3 print_label.py --selftest` and look at the printed label.
 2. If the swatch prints inverted (right half black), bitmap polarity is the
    other way round on this firmware: add `--black-is-one 1` (the default,
    `0`, is **confirmed correct on this Mac's printer** as of 2026-09-27 --
    see `PLANS/PLAN.md`). `--selftest --test --preview /tmp/selftest.png`
-   shows the intended label without printing.
+   shows the intended label without printing -- **un-stretched, physical
+   size**, i.e. what it will look like on paper, not the feed-scale-stretched
+   bitmap actually sent (see below); every `--preview`, including the web
+   UI's, follows this same convention.
 3. Nudge alignment with `--x-shift`/`--y-shift` (mm); adjust `--density` if
    text is too light or too dark.
 4. Lock in what worked by adding `--save-defaults` to that same command line.
+
+### Feed-axis length and x-alignment (`--feed-scale`, `--scale-test`)
+
+**This printer is mechanically short along the paper feed**, hardware-
+verified 2026-09-27: an 800-row bar printed at 98.1mm, not 100mm (Munbyn's
+own phone app shows the same *kind* of error over a completely different,
+Bluetooth code path, so it's the printer, not this repo's math). `feed_scale
+= printed_length / intended_length`; this repo stretches every job's bitmap
+height and `SIZE` length by `1/feed_scale` before sending to compensate --
+**verified on paper**. The default, `0.981`, is this printer's own measured
+value (`munbyn.config.DEFAULTS`); `--feed-scale 1.0` disables the
+correction entirely. **The native CUPS queue's feed correction is separate**
+-- see "The CUPS queue's own feed scale" below.
+
+Across the print head this printer is accurate (no scale correction needed
+there). The image itself lands about 3.1mm right of the label's left edge
+regardless of `SIZE` width -- tested and confirmed not to be fixable by
+changing `SIZE` (see PLANS/PLAN.md's struck hypothesis); Dwight attributes
+this to how the label physically sits in the printer, not to the firmware or
+`SIZE`. It's left entirely to `--x-shift`.
+
+`--scale-test` prints (or `--test`: dry-runs/`--preview`s, un-stretched like
+`--selftest`) a calibration label with two bars (target lengths 90mm across
+the head, 100mm along the feed), each with 10mm ticks plus a final tick at
+its true end, using the label size and *current* `feed_scale`. On stock too
+small to fit a bar's full target length, that bar is clipped and the label
+says so (a "(SHORT ...)" note) -- the caption always prints the bar's
+*actual* drawn length, not the target, so the numbers below always mean the
+printed label in front of you:
+
+- **"A across"** -- across the print head, starting at a printed nominal
+  left gap (5.00mm -- comfortably above this printer's own ~3.1mm offset, so
+  a correction below doesn't crop the gap to nothing). Measure the *actual*
+  left gap on the printed label with calipers and compare it to that printed
+  nominal value:
+
+  ```
+  x_shift = nominal_left_mm - measured_left_mm
+  ```
+
+  A negative result nudges the image left (and crops it); re-print with
+  `--x-shift <x_shift>` and re-measure -- the gap should now read close to
+  the nominal value again.
+- **"B along feed"** -- along the paper feed. Measure its printed length
+  with calipers (`measured_B_mm`) and compute, using the length the label's
+  "B along feed" line says it actually drew (`drawn_B_mm` -- not always
+  100mm; shorter on stock too short for the full bar):
+
+  ```
+  new_feed_scale = old_feed_scale * measured_B_mm / drawn_B_mm
+  ```
+
+  Save it and re-run to confirm:
+
+  ```sh
+  python3 print_label.py --feed-scale <new_feed_scale> --save-defaults
+  python3 print_label.py --scale-test   # re-measure B; should now read ~drawn_B_mm
+  ```
+
+Re-run `--scale-test` after any stock change or on a different printer unit
+-- `feed_scale`/`--x-shift` are mechanical properties of a specific
+printer/roller/stock combination, not universal constants.
+
+### The CUPS queue's own feed scale
+
+The native CUPS queue (below) does **not** read `munbyn.config`/
+`--feed-scale`/`--scale-test` at all -- it gets its own feed correction
+baked into the installed PPD's default `Resolution` (`203x<N>dpi`, quantised
+to about 0.5% steps), set once at install time by `sudo
+scripts/install-cups-queue.sh --feed-scale <F>` and left untouched by
+recalibrating the CLI/web UI's `feed_scale`. Re-run that install command
+with a new `--feed-scale` to recalibrate the CUPS queue. See
+`cups/README.md`.
 
 ## Troubleshooting
 

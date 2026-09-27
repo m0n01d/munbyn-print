@@ -30,6 +30,14 @@ DEFAULTS: Dict[str, Any] = {
     "x_shift_mm": 0.0,
     "y_shift_mm": 0.0,
     "bitmap_black_is_one": False,
+    # This printer (RW403B, this Mac) is mechanically short along the paper
+    # feed: an 800-row bar printed at 98.1mm, not 100mm (caliper-measured
+    # 2026-09-27; Munbyn's own phone app shows the same kind of error, so
+    # it's mechanical, not this repo's math). feed_scale = printed length /
+    # intended length; every job path stretches bitmaps/SIZE length by
+    # 1/feed_scale before sending to compensate. 1.0 disables the
+    # correction. See CLAUDE.md and PLANS/PLAN.md.
+    "feed_scale": 0.981,
     "fit": "fit",
     "rotate": "auto",
     "crop": "auto",

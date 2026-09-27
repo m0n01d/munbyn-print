@@ -67,3 +67,16 @@ def test_save_returns_path_and_creates_parent_dirs(tmp_path, monkeypatch):
     result = config.save({"density": 5})
     assert result == path
     assert path.exists()
+
+
+def test_defaults_include_this_printers_measured_feed_scale():
+    # This printer (RW403B, this Mac) measured 0.981 on 2026-09-27 -- see
+    # CLAUDE.md/PLANS/PLAN.md. A fresh install with no saved config must
+    # apply this correction automatically.
+    assert config.DEFAULTS["feed_scale"] == 0.981
+
+
+def test_feed_scale_round_trips_through_save_and_load(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUNBYN_CONFIG", str(tmp_path / "cfg.json"))
+    config.save({"feed_scale": 1.0})
+    assert config.load()["feed_scale"] == 1.0
