@@ -5,7 +5,10 @@ using its native TSPL command language (via `pyusb`), because the vendor's
 macOS CUPS driver is x86_64-only and fails on Apple Silicon without Rosetta.
 It renders PDFs (`pypdfium2`) and images (`Pillow`) to 1-bit label bitmaps and
 sends them raw -- no CUPS involved. A CLI (`print_label.py`) and a small Flask
-web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package.
+web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package. The CLI
+can also print over Bluetooth LE (`--ble`, via `bleak`), using the protocol of
+Munbyn's web editor -- implemented and unit-tested 2026-09-27 but **not yet run
+against the printer** (see `PLANS/BLE-IMPLEMENTATION.md`).
 
 ## Commands
 
@@ -13,6 +16,8 @@ web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package.
   `requirements-dev.txt`)
 - Tests: `.venv/bin/pytest -q --timeout=60`
 - Dry run (never touches USB): `python3 print_label.py <file> --test`
+- Bluetooth dry run (never touches the radio, never imports bleak):
+  `python3 print_label.py <file> --ble --test` -- dumps every BLE frame
 
 ## Never print without asking
 
@@ -22,6 +27,14 @@ device.** Tests always mock USB (`munbyn.usb_transport.Printer`) -- they never
 open the real device. Only a human, or an explicit human-approved real print,
 should print for real. This applies to every agent working in this repo, not
 just whichever one is touching `munbyn/`/CLI/web code that turn.
+
+The same goes for Bluetooth, and it is stricter: **agents never run
+`--ble`/`--ble-address` without `--test`, and never run `--ble-scan`,
+`--status --ble` or `--ble-printer-selftest` (without `--test`) at all** --
+not even a scan or a connect -- unless Dwight has OK'd that specific step (P2
+in `PLANS/BLE-IMPLEMENTATION.md`). BLE tests drive
+`munbyn.ble_transport.BlePrinter` through a fake client (`client_factory`,
+`find_device`) and must never instantiate `bleak.BleakClient`/`BleakScanner`.
 
 ## The printer's command subset (hardware-verified 2026-09-27)
 
@@ -68,8 +81,17 @@ struck -- see PLANS/PLAN.md), so it is never "fixed" by changing `SIZE`.
 - `munbyn/tspl.py` -- TSPL command builder (header, bitmap, jobs, status decode,
   `SUPPORTED_COMMANDS`, `scale_test_image`/`scale_test_job`)
 - `munbyn/usb_transport.py` -- pyusb transport (`Printer`, `find_printers`)
+- `munbyn/ble_protocol.py` -- pure Bluetooth protocol: framing, hand-rolled
+  protobuf, heatshrink sections/packets, control frames, notification decoding,
+  `--test` frame dump. Byte-exact against `tests/fixtures/ble/` goldens (spec:
+  `PLANS/BLE-PROTOCOL.md`)
+- `munbyn/ble_transport.py` -- bleak transport (`BlePrinter`, `print_job`,
+  `query_device_info`, `scan`); bleak imported lazily; Ctrl-C sends
+  CANCELPRINTING. Its errors subclass `usb_transport.PrinterError`
 - `munbyn/render.py` -- PDF/image to 1-bit label bitmap
 - `munbyn/config.py` -- `~/.config/munbyn-print/config.json` persistence
+  (incl. `transport`, `ble_address`, `ble_feed_scale` -- the latter defaults
+  to the USB-measured 0.981 and is unverified over Bluetooth)
 - `templates/`, `static/` -- web UI (plain HTML/JS, no build step)
 - `scripts/install-pdf-service.sh` -- builds & links the "Print to Munbyn
   RW403B" macOS PDF Service app (an app bundle, not an executable script --

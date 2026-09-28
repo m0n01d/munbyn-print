@@ -38,6 +38,17 @@ DEFAULTS: Dict[str, Any] = {
     # 1/feed_scale before sending to compensate. 1.0 disables the
     # correction. See CLAUDE.md and PLANS/PLAN.md.
     "feed_scale": 0.981,
+    # Bluetooth LE (print_label.py --ble; see README "Bluetooth" and
+    # PLANS/BLE-IMPLEMENTATION.md). "transport" picks the default link when
+    # neither --ble nor --usb is given. ble_address is the printer's
+    # CoreBluetooth UUID from --ble-scan (None = scan by name each time).
+    # ble_feed_scale is feed_scale for Bluetooth jobs: it defaults to the
+    # USB-measured 0.981 but is UNVERIFIED over BLE (Munbyn's phone app, which
+    # prints over Bluetooth, measured 97.23mm for 100mm) -- re-measure with
+    # `--scale-test --ble` and save it with --ble-feed-scale F --save-defaults.
+    "transport": "usb",
+    "ble_address": None,
+    "ble_feed_scale": 0.981,
     "fit": "fit",
     "rotate": "auto",
     "crop": "auto",

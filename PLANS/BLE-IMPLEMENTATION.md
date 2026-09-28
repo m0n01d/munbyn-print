@@ -4,9 +4,11 @@ Goal: print to the RW403B with the USB cable unplugged. First from the CLI (P1, 
 Preview's normal Print dialog (P3). The protocol is specified in `PLANS/BLE-PROTOCOL.md`. Golden
 vectors and a reference encoder are in `tests/fixtures/ble/`.
 
-**Status (2026-09-27): plan only. No transport code exists yet.** The protocol is known from the
-editor's JS and our encoder matches it byte for byte, but none of it has touched the printer. The
-USB/TSPL path stays the default and is not changed by any phase here.
+**Status (2026-09-27): P1 is implemented and unit-tested; nothing has touched the printer yet.**
+`munbyn/ble_protocol.py`, `munbyn/ble_transport.py` and `print_label.py --ble` exist, with 133 tests
+(`tests/test_ble_protocol.py`, `tests/test_ble_transport.py`, `tests/test_cli_ble.py`) that replay the
+golden vectors byte for byte and drive the transport with a fake BleakClient. P2 (the first real
+Bluetooth print, with Dwight) is next. The USB/TSPL path stays the default and is unchanged.
 
 **Rule carried over from CLAUDE.md:** agents never write to the real printer over BLE without
 Dwight's explicit OK for that print. Tests always use a fake BleakClient. `--test` builds the
@@ -80,6 +82,42 @@ belong to a process in Dwight's login session.
    `ble_feed_scale`, which stays `None` until P2 measures it; until then it falls back to
    `feed_scale`.
 5. **Docs**: add a BLE section to the README and a module-map line in CLAUDE.md.
+
+#### P1 as built (2026-09-27)
+
+Done, with these differences from the plan above:
+
+- **Flags.** `--status --ble` is the DEVICEINFO query (no separate `--ble-info`). Added `--usb`
+  (overrides a saved `"transport": "ble"`), `--ble-scan-timeout`, `--ble-feed-scale`,
+  `--ble-packet-size N` (the documented fallback for a too-small MTU is 148), `--ble-write
+  auto|response|no-response`, and `--ble-printer-selftest` (the printer's own SELFTEST page).
+  `--list --ble` points at `--ble-scan`, the only command that lists devices.
+- **`ble_feed_scale` defaults to 0.981** (the USB value), not `None`. It is a separate config key and
+  is unverified over BLE. With `--ble`, a plain `--feed-scale` also works for one run.
+- **Write type.** `auto` by default: with-response when the characteristic has the Write property,
+  else without-response, which is what Chrome's `writeValue()` does. A frame bigger than the connection
+  allows (512 B with response, `max_write_without_response_size` without) is refused *before* the first
+  DEVICEPRINT, with a message naming `--ble-packet-size 148`. Each write has a 5 s timeout, which the
+  editor doesn't have.
+- **Scan** is by name prefix only, with no `0xABF0` service filter. Whether the printer advertises the
+  service UUID is unknown, and the editor filters by name too. With `--ble-address`, bleak looks the
+  device up by address first (`--ble-scan-timeout`), then connects (2 x 4 s).
+- **One DEVICEINFO per job.** The editor sends one at connect time and one at print time. We send one
+  after connecting (it does both jobs), so the writes are exactly the golden 52 for the 4x6 self-test.
+- **Duplicate replies.** Acks or resend requests that arrive during the post-section pause
+  (`min(5, len/1024/160*1000/2)` ms) are dropped, as in the editor. The golden-replay tests pin this.
+- **Timeouts.** After PRINTINEND the transport waits 30 s + 15 s per expected page for the "printed"
+  reports. Past that it errors, saying every section was acked. That limit is ours; the editor has none.
+- **Ctrl-C.** A loop signal handler, not KeyboardInterrupt. The first press during a job sends
+  CANCELPRINTING, waits up to 2 s for `{ev 5, 200}`, and disconnects (exit 130). A second press, or any
+  press outside a job, cancels at once.
+- **Density/speed** are opt-in only (`--ble-density`, `--ble-speed`). TSPL `--density`/`--speed` are
+  never mapped, and a note says so. `--status --ble --ble-density N` sets the value and then shows it.
+- **Not done:** the web UI (still USB-only; P4). `--black-is-one` is ignored over BLE, which always
+  sends 1 = black; `--invert` is the escape hatch if hardware shows otherwise.
+- **Guesses to check in P2:** the 200 ms pause after a density/speed write, the 1 s post-connect and
+  200 ms post-notify sleeps (copied from the editor, which has Web Bluetooth's connect sequence), and
+  the "printed" timeout above.
 
 ### P2: hardware verification with Dwight (each step needs his OK)
 

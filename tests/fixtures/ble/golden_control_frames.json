@@ -1,0 +1,41 @@
+{
+  "note": "Generated 2026-09-27 by running the Munbyn web editor's own protobuf (module 53689) and framing (module 4476) code in node. hex; frame = enpack(MPSendMsg.serializeBinary()). Our own generated data, see PLANS/BLE-PROTOCOL.md.",
+  "print_sample": {
+    "characteristic": "0xABF4 (writeApi)",
+    "mpprintmsg": "0801122803203d5a7794b1ceeb0825425f7c99b6d3f00d2a4764819ebbd8f5122f4c6986a3c0ddfa1734516e1880192001280130643801400150506001",
+    "mpsendmsg": "08042a3d0801122803203d5a7794b1ceeb0825425f7c99b6d3f00d2a4764819ebbd8f5122f4c6986a3c0ddfa1734516e1880192001280130643801400150506001",
+    "frame": "554140c108042a3d0801122803203d5a7794b1ceeb0825425f7c99b6d3f00d2a4764819ebbd8f5122f4c6986a3c0ddfa1734516e1880192001280130643801400150506001"
+  },
+  "control": {
+    "DEVICEINFO (x())": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "0801",
+      "frame": "5502405d0801"
+    },
+    "SELFTEST (V())": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "0802",
+      "frame": "5502405d0802"
+    },
+    "PRINTINEND (W())": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "080a",
+      "frame": "55024055080a"
+    },
+    "CANCELPRINTING (Q())": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "0805",
+      "frame": "550240590805"
+    },
+    "PRINTINCONCENTRATION=8": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "08092010",
+      "frame": "5504006108092010"
+    },
+    "PRINTINGSPEED=4": {
+      "characteristic": "0xABF1 (writeApi2)",
+      "mpsendmsg": "08082008",
+      "frame": "5504007908082008"
+    }
+  }
+}

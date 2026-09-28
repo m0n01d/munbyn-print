@@ -244,6 +244,92 @@ recalibrating the CLI/web UI's `feed_scale`. Re-run that install command
 with a new `--feed-scale` to recalibrate the CUPS queue. See
 `cups/README.md`.
 
+## Bluetooth (`--ble`) -- experimental, not yet tried on the printer
+
+**Status (2026-09-27): written and unit-tested, never run against the
+printer.** The protocol comes from reading and running the JS of Munbyn's web
+editor, which prints to the RW403B over Web Bluetooth
+(`PLANS/BLE-PROTOCOL.md`); our frames are byte-identical to the editor's on
+recorded golden jobs, but the first real Bluetooth print is still to come
+(P2 in `PLANS/BLE-IMPLEMENTATION.md`). USB stays the default and is unchanged.
+
+```sh
+# Frame dump: builds the whole Bluetooth job and shows every write -- no radio
+python3 print_label.py --selftest --ble --test
+python3 print_label.py label.pdf --ble --test --hex frames.bin
+
+# List nearby RW403B printers with signal strength; remember one
+python3 print_label.py --ble-scan
+python3 print_label.py --status --ble --ble-address <UUID> --save-defaults
+
+# Printer status/settings/firmware over Bluetooth (DEVICEINFO)
+python3 print_label.py --status --ble
+
+# Print (files, --selftest, --scale-test, --feed, --copies all work)
+python3 print_label.py label.pdf --ble --copies 2
+python3 print_label.py --selftest --ble --debug   # --debug logs every frame in hex
+```
+
+- **Finding the printer.** Without `--ble-address` it scans (10 s,
+  `--ble-scan-timeout`) for a name starting `RW403B` and connects to the first
+  one. macOS hides Bluetooth MAC addresses, so the address is a per-Mac
+  CoreBluetooth UUID from `--ble-scan` -- it won't work on another Mac. The
+  printer takes one connection at a time: close the Munbyn phone app / the
+  editor tab first. The Mac running the command has to be in Bluetooth range
+  (about 10 m). `--ble --save-defaults` makes Bluetooth the default
+  (`"transport": "ble"` in the config); `--usb` overrides it for one run.
+- **What gets sent.** DEVICEINFO (the job refuses to start unless the printer
+  reports every status bit clear; busy/calibrating waits 4 s and asks once
+  more), the page as heatshrink-compressed 400-byte packets, section by
+  section with an ack per section (a resend request rewinds to that section),
+  then PRINTINEND, then it waits for one "printed" report per page x copy and
+  disconnects. No label size, gap, density or speed is sent -- the printer
+  feeds by its own gap sensor. `--x-shift`/`--y-shift` are baked into the
+  bitmap (Bluetooth has no offsets). TSPL-only flags (`--density`, `--speed`,
+  `--media`, `--gap`, `--offset`, `--direction`, `--black-is-one`) are ignored
+  with a note.
+- **Density/speed are opt-in.** `--ble-density 1-16` / `--ble-speed 1-8` send
+  the editor's PRINTINCONCENTRATION / PRINTINGSPEED messages before the job.
+  They are off by default because the printer is believed to *store* them
+  (unverified) and their scale is the editor's, not TSPL's `DENSITY 0-15`.
+  `--status --ble` shows the current values.
+- **Feed scale.** Bluetooth jobs use their own `ble_feed_scale` (config key;
+  `--ble-feed-scale F`, or `--feed-scale F` for one run with `--ble`). It
+  defaults to the USB-measured 0.981 but is **unverified over Bluetooth** (the
+  phone app measured 97.23 mm for 100 mm): print `--scale-test --ble`, measure
+  bar B, and save `--ble-feed-scale <old*B/100> --save-defaults`.
+- **Ctrl-C** during a job sends CANCELPRINTING, waits up to 2 s for the
+  printer's OK and disconnects; a second Ctrl-C stops waiting.
+- **"frame ... larger than this connection allows"** (or a write failing with
+  a length error): the connection's MTU is too small for 433-byte frames.
+  Retry with `--ble-packet-size 148` (181-byte frames -- the size the editor
+  itself uses on BLE firmware 1.0.8, which is also chosen automatically when
+  the printer reports that firmware). `--ble-write response|no-response`
+  forces the GATT write type (default `auto`: with response when the
+  characteristic allows it, like Chrome).
+- **The web UI is USB-only** for now.
+
+### First run: the macOS Bluetooth permission
+
+macOS asks before any process uses Bluetooth ("... would like to use
+Bluetooth"). For a command-line tool the permission belongs to the app it
+runs in -- **Terminal, iTerm2, or VS Code**, not `python3` -- so the first
+`--ble-scan` or `--ble` run from, say, Terminal pops the prompt for
+*Terminal*. Allow it; the grant is listed under **System Settings > Privacy &
+Security > Bluetooth** and covers everything later run from that app. If it
+was denied, bleak reports Bluetooth as unauthorized: turn the app's switch on
+there, or reset the decision so macOS asks again:
+
+```sh
+tccutil reset BluetoothAlways com.apple.Terminal      # Terminal
+tccutil reset BluetoothAlways com.googlecode.iterm2   # iTerm2
+tccutil reset BluetoothAlways                         # every app
+```
+
+Run it from a terminal on the Mac that is near the printer. Over SSH there is
+no app to show the prompt to, so Bluetooth is likely to be refused there
+(unverified). Bluetooth must also be switched on.
+
 ## Troubleshooting
 
 - **Printer not found**: check the USB cable, then `--list`.
@@ -272,14 +358,18 @@ with a new `--feed-scale` to recalibrate the CUPS queue. See
 ```
 print_label.py             CLI entry point
 web.py                      Flask web UI (127.0.0.1:5050)
-munbyn/                     labels, tspl, render, usb_transport, config
+munbyn/                     labels, tspl, render, usb_transport, config,
+                            ble_protocol (pure BLE frames), ble_transport (bleak)
 templates/, static/         web UI assets (plain HTML/JS, no build step)
 scripts/install-pdf-service.sh   builds/links the PDF-menu "app" print path
 scripts/print-from-dialog.sh     wrapper that app shells out to
 cups/, scripts/install-cups-queue.sh   native CUPS queue (separate track)
 PLANS/PLAN.md               dated hardware facts, decisions, open items
-PLANS/BLE.md                Bluetooth transport research (unverified, future)
-tests/                      pytest -- USB is always mocked
+PLANS/BLE-PROTOCOL.md       Bluetooth protocol spec (from Munbyn's web editor)
+PLANS/BLE-IMPLEMENTATION.md Bluetooth plan and status
+PLANS/BLE.md                first Bluetooth notes (superseded by BLE-PROTOCOL.md)
+tests/                      pytest -- USB and Bluetooth are always mocked
+tests/fixtures/ble/         Bluetooth golden vectors + capture tools
 ```
 
 See `CLAUDE.md` for the module map, agent rules, and the printer's verified

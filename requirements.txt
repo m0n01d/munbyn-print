@@ -3,3 +3,17 @@ libusb-package>=1.0.26
 Pillow>=10.0.0
 pypdfium2>=4.30.0
 Flask>=3.0.0
+# --- Bluetooth LE (print_label.py --ble), added 2026-09-27; see PLANS/BLE-IMPLEMENTATION.md
+# "Dependencies". Pinned for the macOS system Python 3.9 this repo runs on: bleak 1.1.1 is the last
+# release that supports 3.9 (2.x+ need 3.10), and pyobjc 12.x has no cp39 wheels (its source build
+# fails with this Mac's clang), so bleak's pyobjc>=10.3 requirements are held at 11.1 -- including
+# pyobjc-framework-Cocoa, which CoreBluetooth/libdispatch pull in. Installed into .venv and
+# import-checked on Python 3.9.6 on 2026-09-27. Imported lazily: the USB path never loads them.
+bleak==1.1.1
+pyobjc-core==11.1; sys_platform == "darwin"
+pyobjc-framework-Cocoa==11.1; sys_platform == "darwin"
+pyobjc-framework-CoreBluetooth==11.1; sys_platform == "darwin"
+pyobjc-framework-libdispatch==11.1; sys_platform == "darwin"
+# heatshrink (LZSS). Its defaults, window_sz2=11 / lookahead_sz2=4, are what Munbyn compiled into the
+# editor's heatshrink.js; byte-identical to it on the golden vectors. ISC licence, cp39 arm64 wheel.
+heatshrink2==0.14.0
