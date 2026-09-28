@@ -38,6 +38,7 @@ def _reexec_into_venv_or_raise(exc: BaseException) -> None:
 try:
     from flask import Flask, jsonify, render_template, request
 
+    from munbyn import ble_bridge_client as bridge_client
     from munbyn import config as config_mod
     from munbyn import labels as labels_mod
     from munbyn import render as render_mod
@@ -81,8 +82,24 @@ def _security_error(req: "request") -> Optional[Any]:
     return None
 
 
+def _transport_from_form(form: Any, settings: Dict[str, Any]) -> str:
+    """"usb" or "ble" (Bluetooth via the MunbynBLE bridge): the form's
+    ``transport`` field, else the config's."""
+    value = str(form.get("transport") or settings.get("transport") or "usb").lower()
+    if value not in ("usb", "ble"):
+        raise ValueError("transport must be usb or ble, not {!r}".format(value))
+    return value
+
+
 def _settings_from_form(form: Any) -> Dict[str, Any]:
     settings = dict(config_mod.load())
+    settings["transport"] = _transport_from_form(form, settings)
+    if settings["transport"] == "ble":
+        # Bluetooth jobs have their own feed correction; the page's feed-scale
+        # field is switched to it (static/app.js), and API callers that send
+        # no feed_scale get the config's ble_feed_scale.
+        ble_scale = settings.get("ble_feed_scale")
+        settings["feed_scale"] = ble_scale if ble_scale is not None else settings["feed_scale"]
     for key in _SETTINGS_FORM_KEYS:
         raw = form.get(key)
         if raw is None or raw == "":
@@ -146,6 +163,35 @@ def _job_settings_from_form(form: Any, settings: Dict[str, Any], size: "labels_m
     )
 
 
+def _print_via_bridge(
+    settings: Dict[str, Any], job_settings: "tspl_mod.JobSettings", images: Any, test_mode: bool
+) -> Any:
+    """Bluetooth: hand the pages to the MunbynBLE bridge as a TSPL job (the
+    web server itself never opens Bluetooth -- macOS would kill it when it's
+    started from an app without the Bluetooth permission)."""
+    try:
+        port = bridge_client.bridge_port(settings)
+        job = bridge_client.build_bridge_job(job_settings, list(images))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if test_mode:
+        return jsonify({
+            "ok": True, "dry_run": True, "transport": "ble",
+            "describe": tspl_mod.describe(job) + "\n(dry run) would send this job to the MunbynBLE bridge on "
+                        "127.0.0.1:{} for Bluetooth; nothing was sent.".format(port),
+        })
+    labels = len(images) * job_settings.copies
+    try:
+        bridge_client.status(port)  # make sure it's our bridge before sending a job to that port
+        reply = bridge_client.send_job(port, job, timeout=bridge_client.job_timeout(labels))
+    except bridge_client.BridgeError as exc:
+        return jsonify({"ok": False, "transport": "ble", "error": str(exc)}), 503
+    return jsonify({
+        "ok": True, "transport": "ble", "pages": len(images), "bytes": len(job), "job": reply.get("job"),
+        "printed": reply.get("printed"), "expected": reply.get("expected"), "seconds": reply.get("seconds"),
+    })
+
+
 def _unstretched(job_settings: "tspl_mod.JobSettings") -> "tspl_mod.JobSettings":
     """``job_settings`` with ``feed_scale`` forced to 1.0, for previews that
     should show the label as it will look on paper (physical size) rather
@@ -171,8 +217,19 @@ def create_app(test_mode: bool = False) -> Flask:
         # template's other fields) so the "advanced" field on the page
         # reflects whatever was last saved with --save-defaults or the web
         # form, not a compile-time constant.
-        feed_scale_default = config_mod.load().get("feed_scale", config_mod.DEFAULTS["feed_scale"])
-        return render_template("index.html", feed_scale_default=feed_scale_default)
+        cfg = config_mod.load()
+        feed_scale_default = cfg.get("feed_scale", config_mod.DEFAULTS["feed_scale"])
+        ble_feed_scale_default = cfg.get("ble_feed_scale")
+        if ble_feed_scale_default is None:
+            ble_feed_scale_default = feed_scale_default
+        transport_default = "ble" if str(cfg.get("transport") or "usb").lower() == "ble" else "usb"
+        return render_template(
+            "index.html",
+            feed_scale_default=(ble_feed_scale_default if transport_default == "ble" else feed_scale_default),
+            usb_feed_scale_default=feed_scale_default,
+            ble_feed_scale_default=ble_feed_scale_default,
+            transport_default=transport_default,
+        )
 
     @app.route("/api/preview", methods=["POST"])
     def api_preview():
@@ -225,6 +282,8 @@ def create_app(test_mode: bool = False) -> Flask:
             opts = _render_options_from_form(request.form, settings)
             pages = render_mod.render_file(data, size, opts, filename=upload.filename)
             job_settings = _job_settings_from_form(request.form, settings, size)
+            if settings["transport"] == "ble":
+                return _print_via_bridge(settings, job_settings, pages, app.config["MUNBYN_TEST_MODE"])
             job = tspl_mod.build_job(job_settings, pages)
         except (ValueError, render_mod.RenderError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -281,6 +340,9 @@ def create_app(test_mode: bool = False) -> Flask:
             })
 
         try:
+            if settings["transport"] == "ble":
+                return _print_via_bridge(settings, job_settings, [tspl_mod.selftest_image(job_settings)],
+                                         app.config["MUNBYN_TEST_MODE"])
             job = tspl_mod.selftest_job(job_settings)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -332,6 +394,9 @@ def create_app(test_mode: bool = False) -> Flask:
             })
 
         try:
+            if settings["transport"] == "ble":
+                return _print_via_bridge(settings, job_settings, [tspl_mod.scale_test_image(job_settings)],
+                                         app.config["MUNBYN_TEST_MODE"])
             job = tspl_mod.scale_test_job(job_settings)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -353,6 +418,13 @@ def create_app(test_mode: bool = False) -> Flask:
         sec_err = _security_error(request)
         if sec_err is not None:
             return sec_err
+        try:
+            cfg = config_mod.load()
+            transport = _transport_from_form(request.args, cfg)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if transport == "ble":
+            return _bridge_status(cfg, app.config["MUNBYN_TEST_MODE"])
         if app.config["MUNBYN_TEST_MODE"]:
             return jsonify({
                 "connected": False, "device_id": None, "status": None, "dry_run": True,
@@ -390,6 +462,31 @@ def create_app(test_mode: bool = False) -> Flask:
         })
 
     return app
+
+
+def _bridge_status(cfg: Dict[str, Any], test_mode: bool) -> Any:
+    """Is the MunbynBLE bridge up? (Its status only -- this never makes it
+    connect to the printer.)"""
+    try:
+        port = bridge_client.bridge_port(cfg)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if test_mode:
+        return jsonify({
+            "transport": "ble", "connected": False, "device_id": None, "status": None, "dry_run": True,
+            "status_note": "dry-run mode (--test): the Bluetooth bridge is never contacted",
+        })
+    try:
+        reply = bridge_client.status(port, timeout=2.0)
+    except bridge_client.BridgeError as exc:
+        return jsonify({
+            "transport": "ble", "connected": False, "device_id": None, "status": None, "dry_run": False,
+            "status_note": str(exc),
+        })
+    return jsonify({
+        "transport": "ble", "connected": True, "device_id": None, "status": None, "dry_run": False,
+        "status_note": bridge_client.describe_status(reply, port), "bridge": reply,
+    })
 
 
 # A default app instance, so `flask --app web run` or a WSGI server can find

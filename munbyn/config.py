@@ -49,6 +49,12 @@ DEFAULTS: Dict[str, Any] = {
     "transport": "usb",
     "ble_address": None,
     "ble_feed_scale": 0.981,
+    # Loopback TCP port of the MunbynBLE bridge (munbyn/ble_bridge.py,
+    # scripts/install-ble-bridge.sh). With transport "ble" the CLI and web UI
+    # send their TSPL job there instead of opening Bluetooth themselves, and
+    # the CUPS "Munbyn RW403B (Bluetooth)" queue prints to
+    # socket://127.0.0.1:<port>. Change both together.
+    "ble_bridge_port": 9100,
     "fit": "fit",
     "rotate": "auto",
     "crop": "auto",

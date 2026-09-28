@@ -11,6 +11,18 @@
 #   sudo scripts/install-cups-queue.sh --feed-scale 0.981  # ...with a measured feed scale
 #   sudo scripts/install-cups-queue.sh --make-default      # ...and make it the default printer
 #   sudo scripts/install-cups-queue.sh --uninstall         # remove only what this script added
+#   sudo scripts/install-cups-queue.sh --ble               # add/update the Bluetooth queue instead
+#   sudo scripts/install-cups-queue.sh --uninstall --ble   # remove only the Bluetooth queue
+#
+# --ble makes a second queue, Munbyn_RW403B_BLE ("Munbyn RW403B (Bluetooth)"),
+# with the same filter and generated PPD but device URI
+# socket://127.0.0.1:9100 (--ble-port N to change the port; it must match the
+# bridge's ble_bridge_port). CUPS's socket backend sends the TSPL job over
+# loopback TCP to the MunbynBLE bridge app (scripts/install-ble-bridge.sh, run
+# WITHOUT sudo first), which prints it over Bluetooth. cupsd itself can never
+# use Bluetooth. The USB queue is left alone either way; the shared filter
+# and PPD are only removed by the USB --uninstall once no Bluetooth queue
+# still needs them.
 #
 # --feed-scale F (default 0.981, allowed 0.90..1.10) is printed length /
 # intended length along the paper feed. The RW403B's head is exact across
@@ -31,14 +43,18 @@
 #     generated from cups/munbyn-rw403b-native.ppd for --feed-scale by
 #     `make -C cups ppd` into a temp dir and checked with cupstestppd first)
 #   CUPS queue Munbyn_RW403B_Native                                       (new queue)
+#   CUPS queue Munbyn_RW403B_BLE, only with --ble                         (new queue)
 #   the default printer, only with --make-default
 # Munbyn's own files in /Library/Printers/Munbyn and the existing
 # Munbyn_RW403B queue are never modified or removed.
 set -euo pipefail
 
-QUEUE=Munbyn_RW403B_Native
+USB_QUEUE=Munbyn_RW403B_Native
+BLE_QUEUE=Munbyn_RW403B_BLE
+QUEUE=$USB_QUEUE
 QUEUE_DESC='Munbyn RW403B (native)'
 QUEUE_LOCATION='USB'
+DEFAULT_BLE_PORT=9100
 FILTER_DIR=/Library/Printers/Munbyn
 FILTER_DST=$FILTER_DIR/rastertotspl
 PPD_DIR=/Library/Printers/PPDs/Contents/Resources
@@ -68,9 +84,18 @@ usage() {
 MODE=install
 MAKE_DEFAULT=0
 FEED_SCALE=
+BLE=0
+BLE_PORT=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --uninstall) MODE=uninstall ;;
+    --ble) BLE=1 ;;
+    --ble-port)
+      [[ $# -ge 2 ]] || die "--ble-port needs a port number, e.g. --ble-port 9100"
+      BLE_PORT=$2
+      shift
+      ;;
+    --ble-port=*) BLE_PORT=${1#--ble-port=} ;;
     --make-default) MAKE_DEFAULT=1 ;;
     --feed-scale)
       [[ $# -ge 2 ]] || die "--feed-scale needs a value, e.g. --feed-scale 0.981"
@@ -95,6 +120,22 @@ fi
 if [[ $MODE == uninstall && -n $FEED_SCALE ]]; then
   die "--feed-scale and --uninstall can't be combined"
 fi
+if [[ -n $BLE_PORT && $BLE == 0 ]]; then
+  die "--ble-port only goes with --ble"
+fi
+if [[ $MODE == uninstall && -n $BLE_PORT ]]; then
+  die "--ble-port and --uninstall can't be combined"
+fi
+BLE_PORT=${BLE_PORT:-$DEFAULT_BLE_PORT}
+if ! [[ $BLE_PORT =~ ^[0-9]+$ ]] || ((BLE_PORT < 1 || BLE_PORT > 65535)); then
+  die "--ble-port must be 1..65535, got '$BLE_PORT'"
+fi
+BLE_URI="socket://127.0.0.1:$BLE_PORT"
+if [[ $BLE == 1 ]]; then
+  QUEUE=$BLE_QUEUE
+  QUEUE_DESC='Munbyn RW403B (Bluetooth)'
+  QUEUE_LOCATION="Bluetooth via the MunbynBLE bridge ($BLE_URI)"
+fi
 FEED_SCALE=${FEED_SCALE:-$DEFAULT_FEED_SCALE}
 if ! [[ $FEED_SCALE =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
   ! awk -v f="$FEED_SCALE" 'BEGIN { exit !(f + 0 >= 0.9 && f + 0 <= 1.1) }'; then
@@ -108,13 +149,23 @@ if [[ $EUID -ne 0 ]]; then
   die "must run as root: sudo $0 $*"
 fi
 
-queue_exists() { lpstat -p "$QUEUE" >/dev/null 2>&1; }
+queue_exists() { lpstat -p "${1:-$QUEUE}" >/dev/null 2>&1; }
 
 uninstall() {
   if queue_exists; then
     run lpadmin -x "$QUEUE"
   else
     say "no $QUEUE queue to remove"
+  fi
+  if [[ $BLE == 1 ]]; then
+    say "done. Only $QUEUE was removed: the USB queue, the filter and the PPD stay."
+    say "the MunbynBLE bridge app is separate: scripts/install-ble-bridge.sh --uninstall (no sudo)"
+    return
+  fi
+  if queue_exists "$BLE_QUEUE"; then
+    say "$BLE_QUEUE still uses $FILTER_DST and $PPD_DST; keeping them (remove that queue with --uninstall --ble first)"
+    say "done. Munbyn's own files and the Munbyn_RW403B queue were not touched."
+    return
   fi
   if [[ -e $FILTER_DST ]]; then
     run rm -f "$FILTER_DST"
@@ -204,7 +255,12 @@ install_queue() {
   run install -o root -g wheel -m 0644 "$ppd_gen" "$PPD_DST"
 
   local uri
-  uri=$(find_uri)
+  if [[ $BLE == 1 ]]; then
+    uri=$BLE_URI
+    say "device URI $uri: CUPS's socket backend sends each job to the MunbynBLE bridge on loopback"
+  else
+    uri=$(find_uri)
+  fi
   if queue_exists; then
     say "$QUEUE already exists; updating it in place"
   fi
@@ -230,6 +286,22 @@ install_queue() {
   else
     say "WARNING: $queue_ppd defaults to Resolution '${queue_res:-?}', expected $RES_CHOICE;" \
       "set it with: lpadmin -p $QUEUE -o Resolution=$RES_CHOICE"
+  fi
+  if [[ $BLE == 1 ]]; then
+    cat <<EOF
+
+Installed. In Preview: File > Print, Printer "$QUEUE_DESC". Same Paper Size,
+Scale and "Printer Features" as the USB queue, but darkness, speed, media type
+and gap are NOT sent over Bluetooth (the printer uses its stored settings).
+The job goes to the MunbynBLE bridge on $BLE_URI, which must be installed and
+allowed to use Bluetooth: scripts/install-ble-bridge.sh (as you, no sudo).
+CUPS cannot see Bluetooth errors (the socket backend reports a job done once the
+bridge has it): on a failure the bridge posts a notification and logs to
+~/Library/Logs/munbyn-ble-bridge.log.
+Feed correction: Resolution $RES_CHOICE (feed scale $FEED_SCALE).
+Undo: sudo $0 --uninstall --ble   (the USB queue is untouched)
+EOF
+    return
   fi
   cat <<EOF
 

@@ -222,6 +222,31 @@ The script:
 Munbyn's own files and the `Munbyn_RW403B` queue are left alone. The default
 printer only changes with `--make-default`.
 
+## Bluetooth queue (`--ble`)
+
+```sh
+scripts/install-ble-bridge.sh                  # first, as you (no sudo): the MunbynBLE bridge app
+sudo scripts/install-cups-queue.sh --ble       # then the queue; --feed-scale F / --ble-port N as needed
+sudo scripts/install-cups-queue.sh --uninstall --ble   # removes only this queue
+```
+
+This adds **Munbyn_RW403B_BLE** ("Munbyn RW403B (Bluetooth)"): the same filter
+and generated PPD, but device URI `socket://127.0.0.1:9100`. CUPS's `socket`
+backend sends the filter's TSPL job over loopback TCP to the MunbynBLE bridge
+(`munbyn/ble_bridge.py`), a per-user LaunchAgent inside `MunbynBLE.app`, which
+prints it over Bluetooth. cupsd can't use Bluetooth itself (a system daemon
+never gets the macOS Bluetooth permission). The USB queue is not touched, and
+the USB `--uninstall` keeps the shared filter and PPD while this queue exists.
+
+Over Bluetooth the printer uses its stored density/speed and its own gap
+sensor, so `Darkness`, `PrintSpeed`, `MediaType` and the gap options have no
+effect; the bitmap (with Resolution's feed correction, offsets, rotation and
+dithering) prints as the filter drew it. CUPS reports the job done once the
+bridge is finished with it; a Bluetooth failure only shows as a notification
+and in `~/Library/Logs/munbyn-ble-bridge.log`. A job sent while the bridge is
+down waits in the queue (the socket backend retries). See the main README's
+"Bluetooth (unplugged) setup".
+
 ## Troubleshooting
 
 - Check the queue with `lpstat -p Munbyn_RW403B_Native -l`. Clear stuck jobs

@@ -5,10 +5,12 @@ using its native TSPL command language (via `pyusb`), because the vendor's
 macOS CUPS driver is x86_64-only and fails on Apple Silicon without Rosetta.
 It renders PDFs (`pypdfium2`) and images (`Pillow`) to 1-bit label bitmaps and
 sends them raw -- no CUPS involved. A CLI (`print_label.py`) and a small Flask
-web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package. The CLI
-can also print over Bluetooth LE (`--ble`, via `bleak`), using the protocol of
-Munbyn's web editor -- implemented and unit-tested 2026-09-27 but **not yet run
-against the printer** (see `PLANS/BLE-IMPLEMENTATION.md`).
+web UI (`web.py`, `http://127.0.0.1:5050`) share the `munbyn/` package. They
+can also print over Bluetooth LE, using the protocol of Munbyn's web editor --
+**verified on the printer 2026-09-28** from Terminal -- through the MunbynBLE
+bridge app (`munbyn/ble_bridge.py`, installed by `scripts/install-ble-bridge.sh`),
+which also backs the CUPS queue "Munbyn RW403B (Bluetooth)" (see
+`PLANS/BLE-IMPLEMENTATION.md`).
 
 ## Commands
 
@@ -16,8 +18,10 @@ against the printer** (see `PLANS/BLE-IMPLEMENTATION.md`).
   `requirements-dev.txt`)
 - Tests: `.venv/bin/pytest -q --timeout=60`
 - Dry run (never touches USB): `python3 print_label.py <file> --test`
-- Bluetooth dry run (never touches the radio, never imports bleak):
-  `python3 print_label.py <file> --ble --test` -- dumps every BLE frame
+- Bluetooth dry run (never touches the radio or the bridge, never imports
+  bleak): `python3 print_label.py <file> --ble --test` -- dumps every BLE frame
+- Bridge installer dry run (builds the app under DIR, never runs launchctl):
+  `scripts/install-ble-bridge.sh --dest <scratch dir>`
 
 ## Never print without asking
 
@@ -35,6 +39,22 @@ not even a scan or a connect -- unless Dwight has OK'd that specific step (P2
 in `PLANS/BLE-IMPLEMENTATION.md`). BLE tests drive
 `munbyn.ble_transport.BlePrinter` through a fake client (`client_factory`,
 `find_device`) and must never instantiate `bleak.BleakClient`/`BleakScanner`.
+
+### Bluetooth from the Claude app always goes through the bridge
+
+macOS kills (SIGABRT, TCC) any process that touches Bluetooth when its
+responsible app has no `NSBluetoothAlwaysUsageDescription` -- and the Claude
+desktop app has none. So from here: **never run `--ble-direct`, `--ble-scan`,
+`--ble-printer-selftest`, `python -m munbyn.ble_bridge`, or anything that
+imports bleak/CoreBluetooth against the radio** -- the process just dies. Plain
+`--ble` (and the web UI's Bluetooth transport) only talks TCP to the MunbynBLE
+bridge on 127.0.0.1, which does the Bluetooth part inside `MunbynBLE.app`; that
+is the only way to print over Bluetooth from here, and it still needs Dwight's
+OK per print like any real print. Tests never reach a real bridge:
+`tests/conftest.py` refuses every `munbyn.ble_bridge_client` connection unless
+a test opts in (`allow_bridge_connections`) against its own fake bridge on an
+ephemeral port. Never run `scripts/install-ble-bridge.sh` without `--dest`
+(it bootstraps a LaunchAgent) unless asked to.
 
 ## The printer's command subset (hardware-verified 2026-09-27)
 
@@ -88,17 +108,29 @@ struck -- see PLANS/PLAN.md), so it is never "fixed" by changing `SIZE`.
 - `munbyn/ble_transport.py` -- bleak transport (`BlePrinter`, `print_job`,
   `query_device_info`, `scan`); bleak imported lazily; Ctrl-C sends
   CANCELPRINTING. Its errors subclass `usb_transport.PrinterError`
+- `munbyn/tspl_parse.py` -- pure: the verified TSPL subset back into page
+  images (clear bit = black), for the bridge
+- `munbyn/ble_bridge.py` -- the MunbynBLE bridge: asyncio server on
+  127.0.0.1:`ble_bridge_port` (9100), TSPL in -> Bluetooth out, one job at a
+  time, `MUNBYN-STATUS` status protocol, retry/notification policy
+- `munbyn/ble_bridge_client.py` -- CLI/web side: status/probe/send_job,
+  `build_bridge_job` (the same pages `--ble-direct` sends, as TSPL)
+- `macos/munbyn-ble-launcher.c`, `scripts/install-ble-bridge.sh` --
+  MunbynBLE.app (C launcher runs the bridge as a child so the app stays the
+  TCC-responsible process) + its LaunchAgent
 - `munbyn/render.py` -- PDF/image to 1-bit label bitmap
 - `munbyn/config.py` -- `~/.config/munbyn-print/config.json` persistence
-  (incl. `transport`, `ble_address`, `ble_feed_scale` -- the latter defaults
-  to the USB-measured 0.981 and is unverified over Bluetooth)
+  (incl. `transport`, `ble_address`, `ble_bridge_port`, `ble_feed_scale` --
+  the latter defaults to the USB-measured 0.981 and is unverified over
+  Bluetooth)
 - `templates/`, `static/` -- web UI (plain HTML/JS, no build step)
 - `scripts/install-pdf-service.sh` -- builds & links the "Print to Munbyn
   RW403B" macOS PDF Service app (an app bundle, not an executable script --
   see the README/PLAN for why)
 - `scripts/print-from-dialog.sh` -- wrapper that app's droplet shells out to
-- `cups/`, `scripts/install-cups-queue.sh` -- native arm64 CUPS queue; owned by
-  a different agent/track, not by the files above
+- `cups/`, `scripts/install-cups-queue.sh` -- native arm64 CUPS queue (and,
+  with `--ble`, the Bluetooth queue: `socket://127.0.0.1:9100` -> the bridge);
+  owned by a different agent/track, not by the files above
 
 ## Shared conventions
 

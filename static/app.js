@@ -12,6 +12,8 @@
   const resultPane = document.getElementById("result");
   const statusLine = document.getElementById("status-line");
   const busy = document.getElementById("busy");
+  const transportSelect = document.getElementById("opt-transport");
+  const feedScaleInput = document.getElementById("opt-feed-scale");
 
   let currentFile = null;
 
@@ -98,6 +100,7 @@
       ["y_shift_mm", "opt-y-shift-mm"],
       ["feed_scale", "opt-feed-scale"],
       ["serial", "opt-serial"],
+      ["transport", "opt-transport"],
     ];
     simple.forEach(([field, id]) => {
       const v = fieldValue(id);
@@ -155,6 +158,7 @@
       ["y_shift_mm", "opt-y-shift-mm"],
       ["feed_scale", "opt-feed-scale"],
       ["serial", "opt-serial"],
+      ["transport", "opt-transport"],
     ];
     simple.forEach(([field, id]) => {
       const v = fieldValue(id);
@@ -200,6 +204,8 @@
         const pre = document.createElement("pre");
         pre.textContent = data.describe;
         resultPane.appendChild(pre);
+      } else if (data.transport === "ble") {
+        resultPane.textContent = `Printed ${data.pages} page(s) over Bluetooth (bridge job #${data.job}, printer reported ${data.printed} of ${data.expected}).`;
       } else {
         resultPane.textContent = `Sent ${data.pages} page(s), ${data.bytes} bytes.`;
       }
@@ -212,9 +218,15 @@
 
   async function refreshStatus() {
     try {
-      const resp = await fetch("/api/status", { headers: { "X-Munbyn": "1" } });
+      const transport = transportSelect ? transportSelect.value : "usb";
+      const resp = await fetch(`/api/status?transport=${encodeURIComponent(transport)}`,
+                               { headers: { "X-Munbyn": "1" } });
       const data = await resp.json();
-      if (data.dry_run) {
+      if (data.transport === "ble" && !data.dry_run) {
+        statusLine.textContent = data.connected
+          ? `Bluetooth: ${data.status_note}`
+          : `Bluetooth bridge not running: ${data.status_note}`;
+      } else if (data.dry_run) {
         statusLine.textContent = data.status_note || "dry-run mode (--test): USB is never touched";
       } else if (data.connected) {
         const flags = data.status && data.status.length ? ` (${data.status.join(", ")})` : "";
@@ -264,7 +276,7 @@
         pre.textContent = data.describe;
         resultPane.appendChild(pre);
       } else {
-        resultPane.textContent = `Self-test sent (${data.bytes} bytes).`;
+        resultPane.textContent = `Self-test sent${data.transport === "ble" ? " over Bluetooth" : ""} (${data.bytes} bytes).`;
       }
     } catch (err) {
       resultPane.textContent = `Error: ${err.message}`;
@@ -309,7 +321,7 @@
         pre.textContent = data.describe;
         resultPane.appendChild(pre);
       } else {
-        resultPane.textContent = `Scale-test sent (${data.bytes} bytes).`;
+        resultPane.textContent = `Scale-test sent${data.transport === "ble" ? " over Bluetooth" : ""} (${data.bytes} bytes).`;
       }
     } catch (err) {
       resultPane.textContent = `Error: ${err.message}`;
@@ -317,6 +329,16 @@
       setBusy(false);
     }
   });
+
+  if (transportSelect) {
+    // Each transport has its own feed correction (config feed_scale vs
+    // ble_feed_scale): show the selected one's saved value.
+    transportSelect.addEventListener("change", () => {
+      const key = transportSelect.value === "ble" ? "bleFeedScale" : "usbFeedScale";
+      if (feedScaleInput && transportSelect.dataset[key]) feedScaleInput.value = transportSelect.dataset[key];
+      refreshStatus();
+    });
+  }
 
   refreshStatus();
 })();

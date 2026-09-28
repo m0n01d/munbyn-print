@@ -4,11 +4,28 @@ Goal: print to the RW403B with the USB cable unplugged. First from the CLI (P1, 
 Preview's normal Print dialog (P3). The protocol is specified in `PLANS/BLE-PROTOCOL.md`. Golden
 vectors and a reference encoder are in `tests/fixtures/ble/`.
 
-**Status (2026-09-27): P1 is implemented and unit-tested; nothing has touched the printer yet.**
-`munbyn/ble_protocol.py`, `munbyn/ble_transport.py` and `print_label.py --ble` exist, with 133 tests
-(`tests/test_ble_protocol.py`, `tests/test_ble_transport.py`, `tests/test_cli_ble.py`) that replay the
-golden vectors byte for byte and drive the transport with a fake BleakClient. P2 (the first real
-Bluetooth print, with Dwight) is next. The USB/TSPL path stays the default and is unchanged.
+**Status (2026-09-28): P1 is hardware-verified; P3 is built (via the MunbynBLE bridge app) and
+waiting for its first install.**
+
+- **P1 verified on hardware 2026-09-28** (conductor + Dwight, Mac mini, printer RW403B-D0C6,
+  CoreBluetooth address `5903F05B-AA01-DD0A-C87B-BAC1438801DF`, saved as `ble_address`). From macOS
+  Terminal, `--status --ble` and `--selftest --ble` worked: upright, not mirrored, correct polarity,
+  one label, stopped at the gap; 16 sections acked, 0 resends, "printed" report received, 4.1 s.
+  DEVICEINFO: firmware 1.1.16, BLE firmware 1.2.1, density 8, speed 4, supportfunction 0 (so no
+  "send while printing": labels over 200 mm are refused). GATT: 0xABF4 write-without-response
+  (max 509 B), 0xABF1 write (512 B), 0xABF3 notify.
+- **The TCC finding that shaped P3.** Run from the Claude desktop app (responsible process
+  `com.anthropic.claude-code`, no `NSBluetoothAlwaysUsageDescription`), Python is *killed* by TCC
+  (SIGABRT, "attempted to access privacy-sensitive data without a usage description"). The same
+  applies to anything launched by cupsd, a web server started from the Claude app, or a bare launchd
+  job. So the P3 spike's fallback is the plan: Bluetooth lives only in `MunbynBLE.app`.
+- **P3 as built** (see "P3 as built" below): `munbyn/tspl_parse.py`, `munbyn/ble_bridge.py`,
+  `munbyn/ble_bridge_client.py`, `macos/munbyn-ble-launcher.c`, `scripts/install-ble-bridge.sh`,
+  `scripts/install-cups-queue.sh --ble`; the CLI's `--ble` and the web UI's Bluetooth transport go
+  through the bridge (`--ble-direct` = the old in-process path, Terminal only). Unit-tested with a
+  fake transport; the installer is checked with a `--dest` dry run. **Not yet done on hardware:**
+  the first real install, the TCC prompt naming MunbynBLE, a Preview print through the Bluetooth
+  queue, and `ble_feed_scale` (still the USB 0.981).
 
 **Rule carried over from CLAUDE.md:** agents never write to the real printer over BLE without
 Dwight's explicit OK for that print. Tests always use a fake BleakClient. `--test` builds the
@@ -173,9 +190,89 @@ Done, with these differences from the plan above:
    small separate script.
 5. Dwight prints the ShedLab page from Preview through the BLE queue with the cable unplugged.
 
+#### P3 as built (2026-09-28)
+
+- **Packaging.** `scripts/install-ble-bridge.sh` (no sudo; `--uninstall`; idempotent) builds
+  `~/Applications/MunbynBLE.app`: Info.plist with `CFBundleIdentifier com.m0n01d.munbyn-ble-bridge`,
+  `CFBundleName MunbynBLE`, `LSUIElement`, `LSMinimumSystemVersion 11.0` and
+  `NSBluetoothAlwaysUsageDescription`, ad-hoc signed (`codesign --force --deep -s -`). Its
+  executable is a compiled C launcher (`macos/munbyn-ble-launcher.c`) that `posix_spawn`s
+  `python -m munbyn.ble_bridge` as a **child** and waits, forwarding SIGTERM/SIGINT/SIGHUP. Not
+  `exec`: the process would become Python and lose the bundle identity TCC checks. Not a bash
+  launcher either: the process would be `/bin/bash`, whose identity is Apple's, not the bundle's.
+- **Runtime copy.** By default the installer copies `.venv` and `munbyn/` to
+  `~/Library/Application Support/MunbynBLE` and the launcher runs that. The repo is under
+  `~/Documents`, which TCC also protects, so running in place would add a second prompt ("access
+  files in your Documents folder") and break the bridge if it's missed. `--in-place` runs from the
+  repo anyway (and adds `NSDocumentsFolderUsageDescription`). Re-run the installer after changing
+  `munbyn/`. The app bundle is only rebuilt when the launcher, its baked paths or the Info.plist
+  change (a build stamp), because a rebuild changes the ad-hoc signature and macOS asks again.
+- **LaunchAgent** `~/Library/LaunchAgents/com.m0n01d.munbyn-ble-bridge.plist`: `RunAtLoad`,
+  `KeepAlive`, `ThrottleInterval 10`, `ProcessType Interactive`, `LimitLoadToSessionType Aqua`,
+  `AssociatedBundleIdentifiers` = the bundle id (so System Settings > Login Items shows MunbynBLE),
+  stdout/stderr to `~/Library/Logs/munbyn-ble-bridge.launchd.log`; `launchctl bootstrap gui/$UID`
+  (bootout on uninstall/update). **ProgramArguments = the app's own executable** (default,
+  `--launch-mode direct`), not `open -W -g -a`: launchd then owns the real process (KeepAlive,
+  `bootout`, `kickstart -k` all act on it and SIGTERM reaches the bridge), and TCC attributes a
+  process to the signed bundle whose `Contents/MacOS` executable it runs, which is what the Claude
+  app case shows (TCC checked the responsible app's Info.plist). With `open`, the app would be a
+  separate LaunchServices job, `bootout` would only kill `open`, and stdout would be lost.
+  `--launch-mode open` is kept as the fallback if the prompt doesn't name MunbynBLE (then uninstall
+  also `pkill`s the app). One consequence: in open mode `kickstart -k` only restarts the `open` job,
+  which just re-waits on the still-running app, so it does **not** restart the bridge -- use
+  `pkill -TERM -f .../MunbynBLE.app/Contents/MacOS/MunbynBLE` instead (KeepAlive relaunches it via
+  `open`). The installer prints the right restart command for whichever mode it just installed.
+- **Permission prompt at install time.** On start, if the authorization is "not determined", the
+  bridge creates a `CBCentralManager` (no scan, no connect), so "MunbynBLE would like to use
+  Bluetooth" appears right away instead of during the first print. It logs the state and posts a
+  notification if it's denied. Status replies include `bluetooth_authorization`.
+- **Bridge** (`munbyn/ble_bridge.py`): asyncio server on 127.0.0.1:`ble_bridge_port` (9100). Per
+  connection: first line `MUNBYN-STATUS` [`DEVICEINFO`] -> one JSON line; otherwise a job read to EOF
+  (64 MB cap, 60 s idle timeout), queued, printed one at a time, answered with one JSON line
+  (`ok`, `job`, `pages`, `labels`, `printed`, `attempts`, `seconds` or `error`) and closed after
+  printing, so CUPS's socket backend waits for the label. Address re-read from the config per job.
+  Failures: parse error -> log + notification; Bluetooth error -> one retry on a fresh connection
+  unless it can't help (printer status, frame too large, label too tall, cancelled) or a label may
+  already be out (`BlePrinter.end_sent`/`printed`, new), then log + notification. SIGTERM cancels a
+  running job (CANCELPRINTING) and exits.
+- **Parser** (`munbyn/tspl_parse.py`): exactly `SUPPORTED_COMMANDS`, `BITMAP` mode 1 only, CRLF or
+  LF, case-insensitive; the printer's buffer semantics (BITMAP ORs in, PRINT m,n = m*n copies of the
+  buffer, CLS clears); page = origin to the furthest bitmap edge, clipped at 880 dots; a `PRINT`
+  with nothing drawn feeds a blank page of `SIZE`. Clear bit = black in, mode "1" images out
+  (`pack_page` makes Bluetooth's 1 = black). Rows are not rescaled.
+- **CLI/web.** `--ble` (or `"transport": "ble"`) probes the bridge's status (so a job is never sent
+  to a stranger on the port), builds the TSPL job with `ble_feed_scale` and the x/y shift baked into
+  the bitmap (`ble_bridge_client.build_bridge_job`: byte-for-byte the pages `--ble-direct` sends --
+  tested), sends it and prints the bridge's verdict. `--status --ble` asks the bridge for DEVICEINFO.
+  Not running -> "run scripts/install-ble-bridge.sh". `--ble-density/--ble-speed` need
+  `--ble-direct`; `--ble-packet-size/--ble-write/--ble-scan-timeout` are noted as ignored; a
+  differing `--ble-address` is noted (the bridge uses the config's). `--ble-scan` and
+  `--ble-printer-selftest` stay in-process (Terminal). The web UI has Printer > Transport (USB /
+  Bluetooth via bridge); its Feed scale field follows the transport.
+- **CUPS.** `sudo scripts/install-cups-queue.sh --ble [--feed-scale F] [--ble-port N]` adds
+  `Munbyn_RW403B_BLE` ("Munbyn RW403B (Bluetooth)"), `socket://127.0.0.1:9100`, same filter and
+  generated PPD; `--uninstall --ble` removes only that queue, and the USB `--uninstall` keeps the
+  shared filter/PPD while the Bluetooth queue exists.
+- **Tests.** `tests/test_tspl_parse.py`, `tests/test_ble_bridge.py` (fake transport, real server on an
+  ephemeral port, real `cups/rastertotspl` output), `tests/test_cli_bridge.py` (CLI + web against the
+  bridge), `tests/test_install_ble_bridge.py` (`--dest` dry run with launchctl/pkill shadowed; the
+  launcher is run with a stub module to check the child relationship and SIGTERM forwarding).
+  `tests/conftest.py` refuses every bridge connection unless a test opts in with its own fake.
+
+### P3 hardware checklist (Dwight / conductor)
+
+1. `scripts/install-ble-bridge.sh` -> the prompt must say **"MunbynBLE** would like to use
+   Bluetooth" -> Allow. The log should then say `Bluetooth permission: allowed` after a
+   `launchctl kickstart -k gui/$UID/com.m0n01d.munbyn-ble-bridge`.
+2. `print_label.py --status --ble` (from the Claude app is fine: only the bridge touches Bluetooth).
+3. `print_label.py --selftest --ble` (bridge path) -> same label as the Terminal run.
+4. `sudo scripts/install-cups-queue.sh --ble`, then the ShedLab page from Preview with the cable
+   unplugged.
+5. `--scale-test --ble` to measure `ble_feed_scale`.
+
 ### P4 (optional, later)
 
-- A BLE option in the web UI.
+- ~~A BLE option in the web UI.~~ Done in P3 (via the bridge).
 - Printer sharing from the Mac that owns the BLE link (see Risks: range).
 
 ## Files

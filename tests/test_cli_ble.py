@@ -279,13 +279,14 @@ def test_bad_ble_usage_is_rc_1(argv, capsys, no_radio):
 
 
 # --------------------------------------------------------------------------- real paths (transport mocked)
+# In-process Bluetooth (--ble-direct); the bridge route is in tests/test_cli_bridge.py.
 
 
 def test_ble_print_calls_transport_with_pages_and_options(monkeypatch, sample_png, capsys):
     rec = Recorder(result=_result(copies=3))
     monkeypatch.setattr(bt, "print_job", rec)
     monkeypatch.setattr(usb_transport, "Printer", _refuse)
-    rc = print_label.main([sample_png, "--ble", "--copies", "3", "--ble-address", "UUID-1", "--ble-packet-size",
+    rc = print_label.main([sample_png, "--ble-direct", "--copies", "3", "--ble-address", "UUID-1", "--ble-packet-size",
                            "148", "--ble-write", "response", "--ble-density", "9"])
     assert rc == 0
     (args, kwargs), = rec.calls
@@ -304,7 +305,7 @@ def test_ble_selftest_uses_saved_address(monkeypatch, capsys):
     config_mod.save({"ble_address": "SAVED-UUID"})
     rec = Recorder(result=_result())
     monkeypatch.setattr(bt, "print_job", rec)
-    assert print_label.main(["--selftest", "--ble"]) == 0
+    assert print_label.main(["--selftest", "--ble-direct"]) == 0
     assert rec.calls[0][0][2].address == "SAVED-UUID"
     assert rec.calls[0][0][2].density is None and rec.calls[0][0][2].speed is None  # opt-in only
 
@@ -312,11 +313,11 @@ def test_ble_selftest_uses_saved_address(monkeypatch, capsys):
 def test_ble_x_shift_is_baked_into_the_page(monkeypatch):
     rec = Recorder(result=_result())
     monkeypatch.setattr(bt, "print_job", rec)
-    assert print_label.main(["--selftest", "--ble", "--x-shift", "-3"]) == 0
+    assert print_label.main(["--selftest", "--ble-direct", "--x-shift", "-3"]) == 0
     shifted = rec.calls[0][0][0][0]
     rec2 = Recorder(result=_result())
     monkeypatch.setattr(bt, "print_job", rec2)
-    assert print_label.main(["--selftest", "--ble"]) == 0
+    assert print_label.main(["--selftest", "--ble-direct"]) == 0
     plain = rec2.calls[0][0][0][0]
     assert shifted.width_dots == plain.width_dots == 816
     assert shifted.data != plain.data
@@ -324,13 +325,13 @@ def test_ble_x_shift_is_baked_into_the_page(monkeypatch):
 
 def test_ble_errors_map_to_exit_codes(monkeypatch, capsys):
     monkeypatch.setattr(bt, "print_job", Recorder(exc=bt.BleTimeout("no ack for section 3")))
-    assert print_label.main(["--selftest", "--ble"]) == 2
+    assert print_label.main(["--selftest", "--ble-direct"]) == 2
     assert "no ack for section 3" in capsys.readouterr().err
     monkeypatch.setattr(bt, "print_job", Recorder(exc=bt.BleCancelled("Cancelled: sent CANCELPRINTING")))
-    assert print_label.main(["--selftest", "--ble"]) == 130
+    assert print_label.main(["--selftest", "--ble-direct"]) == 130
     assert "CANCELPRINTING" in capsys.readouterr().err
     monkeypatch.setattr(bt, "print_job", Recorder(exc=KeyboardInterrupt()))
-    assert print_label.main(["--selftest", "--ble"]) == 130
+    assert print_label.main(["--selftest", "--ble-direct"]) == 130
 
 
 def test_ble_status_prints_deviceinfo(monkeypatch, capsys):
@@ -338,7 +339,7 @@ def test_ble_status_prints_deviceinfo(monkeypatch, capsys):
                          supportfunction=2)
     rec = Recorder(result=info)
     monkeypatch.setattr(bt, "query_device_info", rec)
-    assert print_label.main(["--status", "--ble"]) == 0
+    assert print_label.main(["--status", "--ble-direct"]) == 0
     out = capsys.readouterr().out
     assert "status: hatch_open" in out and "'1.2.3'" in out and "packet size 400" in out
 

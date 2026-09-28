@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """CLI entry point: print a PDF or image to a Munbyn RW403B over USB, or
-over Bluetooth LE with ``--ble`` (not yet verified on the printer -- see the
-README's Bluetooth section).
+over Bluetooth LE with ``--ble`` -- through the MunbynBLE bridge app
+(``munbyn/ble_bridge.py``, ``scripts/install-ble-bridge.sh``), which owns the
+macOS Bluetooth permission, or in-process with ``--ble-direct`` (macOS
+Terminal only). See the README's Bluetooth section.
 
 Runs under the bare macOS ``/usr/bin/python3`` (3.9): if a dependency import
 fails and this project's ``.venv`` exists, it re-execs into that venv's Python
@@ -135,13 +137,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ble = p.add_argument_group(
         "Bluetooth LE",
-        "Print over Bluetooth instead of USB. NOT yet verified on the printer (2026-09-27): the protocol "
-        "comes from Munbyn's web editor -- see the README's Bluetooth section. --test builds the frames "
-        "and shows them without touching Bluetooth. TSPL-only settings (--density, --speed, --gap, "
-        "--media, --offset, --direction, --black-is-one) are not used over Bluetooth.",
+        "Print over Bluetooth instead of USB (verified on the printer 2026-09-28). By default the job goes to "
+        "the MunbynBLE bridge app on 127.0.0.1 (scripts/install-ble-bridge.sh), which owns the macOS Bluetooth "
+        "permission; --ble-direct talks Bluetooth from this process instead (macOS Terminal only). --test "
+        "builds the frames and shows them without touching Bluetooth or the bridge. TSPL-only settings "
+        "(--density, --speed, --gap, --media, --offset, --direction, --black-is-one) are not used over "
+        "Bluetooth. See the README's Bluetooth section.",
     )
     ble.add_argument("--ble", action="store_true",
-                     help="Use Bluetooth LE for this run: files, --selftest, --scale-test, --feed, --status.")
+                     help="Use Bluetooth LE for this run: files, --selftest, --scale-test, --feed, --status. "
+                          "Goes through the MunbynBLE bridge (the printer address is the config's ble_address).")
+    ble.add_argument("--ble-direct", action="store_true",
+                     help="Like --ble, but open Bluetooth in this process instead of using the bridge. Only from "
+                          "an app with the Bluetooth permission (macOS Terminal); macOS kills the process when run "
+                          "from anything else (e.g. the Claude app). --ble-scan, --ble-printer-selftest and "
+                          "--ble-density/--ble-speed always run in-process.")
     ble.add_argument("--usb", action="store_true",
                      help='Use USB for this run even if the config\'s "transport" is "ble".')
     ble.add_argument("--ble-address", metavar="ADDR",
@@ -207,7 +217,7 @@ def _cli_overrides(args: argparse.Namespace) -> Dict[str, Any]:
             overrides[key] = value
     if args.bitmap_black_is_one is not None:
         overrides["bitmap_black_is_one"] = args.bitmap_black_is_one == "1"
-    if args.ble:
+    if args.ble or args.ble_direct:
         overrides["transport"] = "ble"
     elif args.usb:
         overrides["transport"] = "usb"
@@ -218,7 +228,7 @@ def _use_ble(args: argparse.Namespace, settings: Dict[str, Any]) -> bool:
     """Bluetooth for this run? Explicit flags win, then the config's transport."""
     if args.usb:
         return False
-    if args.ble or args.ble_address or args.ble_scan or args.ble_printer_selftest:
+    if args.ble or args.ble_direct or args.ble_address or args.ble_scan or args.ble_printer_selftest:
         return True
     return str(settings.get("transport") or "usb").lower() == "ble"
 
@@ -303,8 +313,8 @@ def _setup_ble_logging(debug: bool) -> None:
 
 def _check_ble_args(args: argparse.Namespace) -> None:
     """Range-check the Bluetooth-only flags (raises ValueError)."""
-    if args.ble and args.usb:
-        raise ValueError("--ble and --usb can't both be given")
+    if (args.ble or args.ble_direct) and args.usb:
+        raise ValueError("--ble/--ble-direct and --usb can't both be given")
     lo, hi = _BLE_PACKET_SIZE_RANGE
     if args.ble_packet_size is not None and not lo <= args.ble_packet_size <= hi:
         raise ValueError("--ble-packet-size must be {}..{}, not {}".format(lo, hi, args.ble_packet_size))
@@ -374,7 +384,13 @@ def _finish_ble(
     if args.test:
         print("feed_scale (Bluetooth): {}".format(job_settings.feed_scale))
         print(bp.describe_job(pages, job_settings.copies, writes, per_size=per_size))
+        print("(dry run) a real run would {}; not touching Bluetooth or the bridge.".format(
+            "open Bluetooth in this process (--ble-direct)" if args.ble_direct else
+            "send this job as TSPL to the MunbynBLE bridge on 127.0.0.1:{}".format(_bridge_port_or_default(settings))
+        ))
         return 0
+    if not args.ble_direct:
+        return _send_via_bridge(args, settings, job_settings, images, what)
 
     from munbyn import ble_transport
 
@@ -387,6 +403,79 @@ def _finish_ble(
         "{} of {} printed, {:.1f} s.".format(
             what, result.pages, result.copies, "y" if result.copies == 1 else "ies", result.writes,
             result.bytes_sent, result.resends, result.printed, result.expected, result.seconds,
+        )
+    )
+    return 0
+
+
+def _bridge_port_or_default(settings: Dict[str, Any]) -> Any:
+    from munbyn import ble_bridge_client as bc
+
+    try:
+        return bc.bridge_port(settings)
+    except ValueError:
+        return settings.get("ble_bridge_port")
+
+
+def _check_bridge_args(args: argparse.Namespace, what: str) -> None:
+    """Flags the bridge can't honour: refuse the opt-in printer settings (they
+    write to the printer), note the per-run Bluetooth knobs it ignores."""
+    if args.ble_density is not None or args.ble_speed is not None:
+        raise ValueError(
+            "--ble-density/--ble-speed change the printer's stored settings and don't go through the MunbynBLE "
+            "bridge; run {} from macOS Terminal with --ble-direct instead".format(what)
+        )
+    ignored = [flag for flag, on in (
+        ("--ble-packet-size", args.ble_packet_size is not None), ("--ble-write", args.ble_write != "auto"),
+        ("--ble-scan-timeout", args.ble_scan_timeout is not None),
+    ) if on]
+    if ignored:
+        print("note: {} only appl{} with --ble-direct; the bridge uses its defaults.".format(
+            ", ".join(ignored), "ies" if len(ignored) == 1 else "y"), file=sys.stderr)
+
+
+def _bridge_status(args: argparse.Namespace, settings: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
+    """The bridge's status (raises BridgeUnavailable with the install hint),
+    plus a note when --ble-address differs from the address the bridge uses."""
+    from munbyn import ble_bridge_client as bc
+
+    port = bc.bridge_port(settings)
+    reply = bc.status(port, **kw)
+    if args.ble_address and reply.get("printer_address") != args.ble_address:
+        print(
+            "note: --ble-address is only used with --ble-direct; the bridge prints to the config's ble_address "
+            "({}). Save a new one with --ble-address ADDR --save-defaults.".format(
+                reply.get("printer_address") or "unset"),
+            file=sys.stderr,
+        )
+    return reply
+
+
+def _send_via_bridge(
+    args: argparse.Namespace,
+    settings: Dict[str, Any],
+    job_settings: "tspl_mod.JobSettings",
+    images: List[Any],
+    what: str,
+) -> int:
+    """Bluetooth through the MunbynBLE bridge: the same pages --ble-direct
+    would send, as a TSPL job (ble_bridge_client.build_bridge_job)."""
+    from munbyn import ble_bridge_client as bc
+
+    _check_bridge_args(args, "this")
+    port = bc.bridge_port(settings)
+    _bridge_status(args, settings)  # is it our bridge? (never send a job to a stranger on the port)
+    job = bc.build_bridge_job(job_settings, images)
+    labels = len(images) * job_settings.copies
+    print("Sending {} page(s) x {} to the MunbynBLE bridge (127.0.0.1:{}); waiting for the printer...".format(
+        len(images), job_settings.copies, port), file=sys.stderr)
+    reply = bc.send_job(port, job, timeout=bc.job_timeout(labels))
+    print(
+        "{} over Bluetooth via the MunbynBLE bridge (job #{}): {} page(s) x {} cop{}, printer reported {} of {} "
+        "printed, {} attempt(s), {:.1f} s.".format(
+            what, reply.get("job"), reply.get("pages", len(images)), job_settings.copies,
+            "y" if job_settings.copies == 1 else "ies", reply.get("printed", "?"), reply.get("expected", "?"),
+            reply.get("attempts", 1), float(reply.get("seconds") or 0.0),
         )
     )
     return 0
@@ -450,18 +539,42 @@ def _cmd_ble_status(args: argparse.Namespace, settings: Dict[str, Any]) -> int:
         if args.ble_speed is not None:
             extra.append("PRINTINGSPEED={} ({})".format(args.ble_speed, bp.speed_frame(args.ble_speed).hex()))
         print(
-            "(dry run) --status --ble would connect over Bluetooth and send DEVICEINFO ({} on 0x{}){}; "
+            "(dry run) --status --ble would {} and send DEVICEINFO ({} on 0x{}){}; "
             "not touching Bluetooth.".format(
+                "connect over Bluetooth (--ble-direct)" if args.ble_direct else
+                "ask the MunbynBLE bridge on 127.0.0.1:{} to connect over Bluetooth".format(
+                    _bridge_port_or_default(settings)),
                 bp.DEVICEINFO_FRAME.hex(), bp.short_uuid(bp.CONTROL_UUID),
                 (", then " + ", ".join(extra) + " and DEVICEINFO again") if extra else "",
             )
         )
         return 0
+    if not args.ble_direct:
+        return _ble_status_via_bridge(args, settings)
     from munbyn import ble_transport
 
     _setup_ble_logging(args.debug)
     info = ble_transport.query_device_info(_ble_options(args, settings))
     print(_format_deviceinfo(info))
+    return 0
+
+
+def _ble_status_via_bridge(args: argparse.Namespace, settings: Dict[str, Any]) -> int:
+    import dataclasses as dc
+
+    from munbyn import ble_bridge_client as bc
+    from munbyn import ble_protocol as bp
+
+    _check_bridge_args(args, "--status")
+    reply = _bridge_status(args, settings, deviceinfo=True, timeout=90.0)
+    print(bc.describe_status(reply, bc.bridge_port(settings)))
+    info = reply.get("deviceinfo")
+    if not isinstance(info, dict):
+        print("error: the bridge could not get DEVICEINFO from the printer: {}".format(
+            reply.get("deviceinfo_error") or "no reply"), file=sys.stderr)
+        return 2
+    names = {f.name for f in dc.fields(bp.DeviceInfo)}
+    print(_format_deviceinfo(bp.DeviceInfo(**{k: v for k, v in info.items() if k in names})))
     return 0
 
 

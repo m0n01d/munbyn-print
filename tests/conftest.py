@@ -264,3 +264,34 @@ def circle_png():
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Never talk to a real MunbynBLE bridge from a test: a bridge running on this
+# Mac would turn a CLI/web test's job into a real Bluetooth print. Every
+# bridge connection goes through munbyn.ble_bridge_client._connect; refuse
+# them all. Tests that need a bridge start a fake one on an ephemeral port and
+# opt back in with allow_bridge_connections (see tests/test_cli_bridge.py).
+# ---------------------------------------------------------------------------
+
+
+def _refuse_bridge(port, timeout):
+    raise ConnectionRefusedError("tests never connect to a real MunbynBLE bridge (port {})".format(port))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_bridge(monkeypatch):
+    from munbyn import ble_bridge_client
+
+    monkeypatch.setattr(ble_bridge_client, "_connect", _refuse_bridge)
+    yield
+
+
+@pytest.fixture
+def allow_bridge_connections(monkeypatch):
+    """Re-enable loopback connections -- only for a test's own fake bridge,
+    whose ephemeral port the test must put in the config (ble_bridge_port)."""
+    from munbyn import ble_bridge_client
+
+    monkeypatch.setattr(ble_bridge_client, "_connect", ble_bridge_client.connect_tcp)
+    yield

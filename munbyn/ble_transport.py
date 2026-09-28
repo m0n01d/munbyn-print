@@ -224,6 +224,10 @@ class BlePrinter:
         self.writes = 0
         self.bytes_sent = 0
         self.resends = 0
+        #: True once PRINTINEND has been (or was being) written for the current
+        #: job: from then on a label may come out, so a caller must not retry
+        #: the job blindly (``munbyn.ble_bridge`` checks this and ``printed``).
+        self.end_sent = False
 
     # -- state
 
@@ -234,6 +238,11 @@ class BlePrinter:
     @property
     def printing(self) -> bool:
         return self._printing
+
+    @property
+    def printed(self) -> int:
+        """"Printed" reports received for the current/last job."""
+        return self._printed
 
     def request_cancel(self) -> None:
         """Ask the running job to stop: it sends CANCELPRINTING at its next
@@ -621,6 +630,7 @@ class BlePrinter:
         self._printed = 0
         self._expected = expected
         self._printing = True
+        self.end_sent = False
         try:
             if self.options.density is not None:
                 await self.set_density(self.options.density)
@@ -637,6 +647,7 @@ class BlePrinter:
                 await self._send_page(page, page_field, per_size)
                 await self._sleep(bp.PER_PAGE_DELAY_S)
             self._check_cancel()
+            self.end_sent = True
             await self._write(bp.CONTROL_UUID, bp.PRINTINEND_FRAME, "PRINTINEND")
             await self._wait_printed(expected)
         except _CancelRequested:

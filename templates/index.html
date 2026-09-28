@@ -114,6 +114,14 @@
 
     <fieldset>
       <legend>Printer</legend>
+      <label title="Bluetooth goes through the MunbynBLE bridge app (scripts/install-ble-bridge.sh), which owns the Mac's Bluetooth permission. Density, speed, media, gap, offset and direction are not sent over Bluetooth.">Transport
+        <select id="opt-transport"
+                data-usb-feed-scale="{{ '%.4f'|format(usb_feed_scale_default) }}"
+                data-ble-feed-scale="{{ '%.4f'|format(ble_feed_scale_default) }}">
+          <option value="usb"{% if transport_default == 'usb' %} selected{% endif %}>USB</option>
+          <option value="ble"{% if transport_default == 'ble' %} selected{% endif %}>Bluetooth (via MunbynBLE bridge)</option>
+        </select>
+      </label>
       <label>Density <input type="number" id="opt-density" min="0" max="15" value="12"></label>
       <label>Speed <input type="number" id="opt-speed" min="1" max="8" value="4"></label>
       <label>Direction

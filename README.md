@@ -63,6 +63,9 @@ under the bare system Python and a dependency is missing.
      itself handles the rasterization contract. **This project's own
      `munbyn/`/CLI/web code never touches CUPS, `sudo`, or `/Library` --
      that queue is a separate, explicitly-privileged install path.**
+   - **(c) Unplugged: "Munbyn RW403B (Bluetooth)"** -- the same queue
+     pointed at the MunbynBLE bridge, which prints over Bluetooth. Three
+     steps; see "Bluetooth (unplugged) setup" below.
 
    **Caveat on (a):** *executable scripts* placed directly in
    `~/Library/PDF Services` have been broken since Big Sur (the print
@@ -244,91 +247,176 @@ recalibrating the CLI/web UI's `feed_scale`. Re-run that install command
 with a new `--feed-scale` to recalibrate the CUPS queue. See
 `cups/README.md`.
 
-## Bluetooth (`--ble`) -- experimental, not yet tried on the printer
+## Bluetooth (`--ble`) -- unplugged printing
 
-**Status (2026-09-27): written and unit-tested, never run against the
-printer.** The protocol comes from reading and running the JS of Munbyn's web
-editor, which prints to the RW403B over Web Bluetooth
-(`PLANS/BLE-PROTOCOL.md`); our frames are byte-identical to the editor's on
-recorded golden jobs, but the first real Bluetooth print is still to come
-(P2 in `PLANS/BLE-IMPLEMENTATION.md`). USB stays the default and is unchanged.
+**Status (2026-09-28): verified on the printer.** From macOS Terminal on the
+Mac mini, `--status --ble` and `--selftest --ble` worked: the self-test came
+out upright, not mirrored, with the right polarity, one label, stopped at the
+gap (16 sections acked, 0 resends, 4.1 s). DEVICEINFO: firmware 1.1.16, BLE
+firmware 1.2.1, density 8, speed 4, supportfunction 0. The protocol comes from
+Munbyn's web editor (`PLANS/BLE-PROTOCOL.md`). USB stays the default.
+
+macOS only lets a process use Bluetooth if the **app responsible for it**
+declares why (`NSBluetoothAlwaysUsageDescription`) and the user allowed it.
+Terminal has that, so the CLI works there. cupsd (Preview's print path) never
+can, and anything started from an app without the key -- the Claude app, a
+web server started from it -- is **killed by macOS** at the first Bluetooth
+call. So Bluetooth lives in one small app, **MunbynBLE.app**: it runs a
+bridge on `127.0.0.1:9100` that takes ordinary TSPL jobs and prints them over
+Bluetooth. The CUPS Bluetooth queue, `print_label.py --ble` and the web UI all
+hand their job to it.
+
+```
+Preview -> CUPS "Munbyn RW403B (Bluetooth)" -> rastertotspl -> socket://127.0.0.1:9100 -\
+print_label.py --ble / web UI (Bluetooth) --------- TSPL job over loopback TCP ---------+-> MunbynBLE bridge -> Bluetooth -> printer
+```
+
+### Bluetooth (unplugged) setup
+
+On the Mac next to the printer (the Mac mini), from this repo:
+
+1. **Install the bridge** (as you, no sudo):
+   `scripts/install-ble-bridge.sh`
+   It builds `~/Applications/MunbynBLE.app` (no Dock icon), copies the Python
+   runtime to `~/Library/Application Support/MunbynBLE`, and starts it with a
+   LaunchAgent (`~/Library/LaunchAgents/com.m0n01d.munbyn-ble-bridge.plist`)
+   that also starts it at login and restarts it if it stops. Re-run it after
+   changing anything in `munbyn/`.
+2. **Click Allow** when macOS asks *"MunbynBLE would like to use
+   Bluetooth"* (it asks as the bridge starts). Missed it? System Settings >
+   Privacy & Security > Bluetooth > MunbynBLE on.
+3. **Add the Preview queue:** `sudo scripts/install-cups-queue.sh --ble`
+   (same filter and PPD as the USB queue, device URI
+   `socket://127.0.0.1:9100`; the USB queue is left alone). Then File > Print
+   > "Munbyn RW403B (Bluetooth)".
+
+Unplug the USB cable, and close the Munbyn phone app / the web editor tab
+first: the printer takes one Bluetooth connection at a time (the bridge
+connects per job and disconnects after).
 
 ```sh
-# Frame dump: builds the whole Bluetooth job and shows every write -- no radio
+# Is the bridge up, and can it reach the printer? (DEVICEINFO over Bluetooth)
+python3 print_label.py --status --ble
+
+# Print through the bridge (files, --selftest, --scale-test, --feed, --copies)
+python3 print_label.py label.pdf --ble --copies 2
+python3 print_label.py --ble --save-defaults     # make Bluetooth the default; --usb overrides it
+
+# Frame dump: builds the whole Bluetooth job and shows every write -- no radio, no bridge
 python3 print_label.py --selftest --ble --test
 python3 print_label.py label.pdf --ble --test --hex frames.bin
 
-# List nearby RW403B printers with signal strength; remember one
+# Terminal only: Bluetooth in this process, no bridge
 python3 print_label.py --ble-scan
-python3 print_label.py --status --ble --ble-address <UUID> --save-defaults
-
-# Printer status/settings/firmware over Bluetooth (DEVICEINFO)
-python3 print_label.py --status --ble
-
-# Print (files, --selftest, --scale-test, --feed, --copies all work)
-python3 print_label.py label.pdf --ble --copies 2
-python3 print_label.py --selftest --ble --debug   # --debug logs every frame in hex
+python3 print_label.py --selftest --ble-direct --debug   # --debug logs every frame in hex
 ```
 
-- **Finding the printer.** Without `--ble-address` it scans (10 s,
-  `--ble-scan-timeout`) for a name starting `RW403B` and connects to the first
-  one. macOS hides Bluetooth MAC addresses, so the address is a per-Mac
-  CoreBluetooth UUID from `--ble-scan` -- it won't work on another Mac. The
-  printer takes one connection at a time: close the Munbyn phone app / the
-  editor tab first. The Mac running the command has to be in Bluetooth range
-  (about 10 m). `--ble --save-defaults` makes Bluetooth the default
-  (`"transport": "ble"` in the config); `--usb` overrides it for one run.
-- **What gets sent.** DEVICEINFO (the job refuses to start unless the printer
-  reports every status bit clear; busy/calibrating waits 4 s and asks once
-  more), the page as heatshrink-compressed 400-byte packets, section by
-  section with an ack per section (a resend request rewinds to that section),
-  then PRINTINEND, then it waits for one "printed" report per page x copy and
-  disconnects. No label size, gap, density or speed is sent -- the printer
-  feeds by its own gap sensor. `--x-shift`/`--y-shift` are baked into the
-  bitmap (Bluetooth has no offsets). TSPL-only flags (`--density`, `--speed`,
-  `--media`, `--gap`, `--offset`, `--direction`, `--black-is-one`) are ignored
-  with a note.
-- **Density/speed are opt-in.** `--ble-density 1-16` / `--ble-speed 1-8` send
-  the editor's PRINTINCONCENTRATION / PRINTINGSPEED messages before the job.
-  They are off by default because the printer is believed to *store* them
-  (unverified) and their scale is the editor's, not TSPL's `DENSITY 0-15`.
-  `--status --ble` shows the current values.
+- **Which printer.** The bridge prints to `ble_address` in
+  `~/.config/munbyn-print/config.json` (the Mac mini has
+  `5903F05B-AA01-DD0A-C87B-BAC1438801DF`, re-read for every job); without
+  one it scans for a name starting `RW403B`. The address is a per-Mac
+  CoreBluetooth UUID from `--ble-scan` (Terminal). Save a new one with
+  `--ble-address <UUID> --save-defaults`. The Mac has to be in Bluetooth range
+  (about 10 m).
+- **What the bridge does with a job.** It accepts only the verified TSPL
+  subset (anything else: logged, notification, nothing printed), turns each
+  `CLS`/`BITMAP`/`PRINT m,n` page into a Bluetooth page (TSPL's clear bit =
+  black becomes Bluetooth's 1 = black; rows are printed as received, already
+  feed-corrected by whoever built the job) and sends `m x n` copies. `SIZE`,
+  `GAP`, `DENSITY` and `SPEED` are logged and ignored: over Bluetooth the
+  printer uses its stored settings and feeds by its own gap sensor. Jobs run
+  one at a time, in order.
+- **Failures.** A Bluetooth failure is retried once on a fresh connection,
+  unless a label may already have printed (then it is not, to avoid a
+  duplicate). After that the bridge logs it and posts a macOS notification
+  ("Munbyn BLE: Print failed: ..."). The CLI and the web UI show the error;
+  CUPS can't (its socket backend only knows the bridge took the job).
+- **What gets sent** (spec in `PLANS/BLE-PROTOCOL.md`): DEVICEINFO (the job
+  refuses to start unless the printer reports every status bit clear;
+  busy/calibrating waits 4 s and asks once more), the page as
+  heatshrink-compressed 400-byte packets section by section with an ack per
+  section (a resend request rewinds to that section), PRINTINEND, then one
+  "printed" report per page x copy, then disconnect. `--x-shift`/`--y-shift`
+  are baked into the bitmap (Bluetooth has no offsets). TSPL-only flags
+  (`--density`, `--speed`, `--media`, `--gap`, `--offset`, `--direction`,
+  `--black-is-one`) are ignored with a note.
+- **Density/speed are opt-in and Terminal-only.** `--ble-direct
+  --ble-density 1-16` / `--ble-speed 1-8` send the editor's
+  PRINTINCONCENTRATION / PRINTINGSPEED before the job. The printer stores
+  them; their scale is the editor's, not TSPL's `DENSITY 0-15`.
+  `--status --ble` shows the current values. They don't go through the
+  bridge (the CLI refuses and says so).
 - **Feed scale.** Bluetooth jobs use their own `ble_feed_scale` (config key;
   `--ble-feed-scale F`, or `--feed-scale F` for one run with `--ble`). It
-  defaults to the USB-measured 0.981 but is **unverified over Bluetooth** (the
-  phone app measured 97.23 mm for 100 mm): print `--scale-test --ble`, measure
-  bar B, and save `--ble-feed-scale <old*B/100> --save-defaults`.
-- **Ctrl-C** during a job sends CANCELPRINTING, waits up to 2 s for the
-  printer's OK and disconnects; a second Ctrl-C stops waiting.
-- **"frame ... larger than this connection allows"** (or a write failing with
-  a length error): the connection's MTU is too small for 433-byte frames.
-  Retry with `--ble-packet-size 148` (181-byte frames -- the size the editor
-  itself uses on BLE firmware 1.0.8, which is also chosen automatically when
-  the printer reports that firmware). `--ble-write response|no-response`
-  forces the GATT write type (default `auto`: with response when the
-  characteristic allows it, like Chrome).
-- **The web UI is USB-only** for now.
+  defaults to the USB-measured 0.981 and is **still unverified over
+  Bluetooth** (the phone app measured 97.23 mm for 100 mm): print
+  `--scale-test --ble`, measure bar B, and save
+  `--ble-feed-scale <old*B/100> --save-defaults`. The CUPS Bluetooth queue
+  uses its PPD's Resolution instead (`--feed-scale` of
+  `install-cups-queue.sh --ble`).
+- **Web UI.** Printer > Transport: *USB* or *Bluetooth (via MunbynBLE
+  bridge)*. The Feed scale field switches to the transport's saved value.
+- **Ctrl-C** during a `--ble-direct` job sends CANCELPRINTING, waits up to
+  2 s for the printer's OK and disconnects; a second Ctrl-C stops waiting.
+  Stopping the bridge (`launchctl bootout`) cancels its running job the same
+  way.
+- **"frame ... larger than this connection allows"**: retry from Terminal with
+  `--ble-direct --ble-packet-size 148`. `--ble-write response|no-response`
+  forces the GATT write type (default `auto`; on this printer 0xABF4 is
+  write-without-response, max 509 B, and 0xABF1 is write, 512 B).
 
-### First run: the macOS Bluetooth permission
+### Bluetooth troubleshooting
 
-macOS asks before any process uses Bluetooth ("... would like to use
-Bluetooth"). For a command-line tool the permission belongs to the app it
-runs in -- **Terminal, iTerm2, or VS Code**, not `python3` -- so the first
-`--ble-scan` or `--ble` run from, say, Terminal pops the prompt for
-*Terminal*. Allow it; the grant is listed under **System Settings > Privacy &
-Security > Bluetooth** and covers everything later run from that app. If it
-was denied, bleak reports Bluetooth as unauthorized: turn the app's switch on
-there, or reset the decision so macOS asks again:
+- **Bridge log:** `~/Library/Logs/munbyn-ble-bridge.log` (every job, header
+  values, retries, errors; start the bridge with `--debug` for frame hex).
+  Startup crashes (Python tracebacks) land in
+  `~/Library/Logs/munbyn-ble-bridge.launchd.log`.
+- **Is it running?** `python3 print_label.py --status --ble`, or
+  `launchctl print gui/$UID/com.m0n01d.munbyn-ble-bridge`.
+- **Restart it (default, `--launch-mode direct`):**
+  `launchctl kickstart -k gui/$UID/com.m0n01d.munbyn-ble-bridge` (cancels a
+  job in progress). **With `--launch-mode open`** the LaunchAgent's job is
+  `open`, not the app, so `kickstart -k` only restarts `open` -- it finds
+  MunbynBLE still running and just waits on it again. Restart the bridge
+  itself with `pkill -TERM -f ~/Applications/MunbynBLE.app/Contents/MacOS/MunbynBLE`
+  instead; KeepAlive relaunches it (through `open`, since that's still how
+  the LaunchAgent is configured).
+- **Never asked / clicked Don't Allow:** turn MunbynBLE on under System
+  Settings > Privacy & Security > Bluetooth, or reset and restart so macOS
+  asks again:
+  `tccutil reset BluetoothAlways com.m0n01d.munbyn-ble-bridge` then restart
+  it (the bullet above -- kickstart in direct mode, pkill in open mode).
+  Re-running the installer after the launcher itself changed rebuilds
+  (re-signs) the app, and macOS asks once more.
+- **Prompt names something other than MunbynBLE** (or MunbynBLE never gets a
+  Bluetooth switch): reinstall with `scripts/install-ble-bridge.sh
+  --launch-mode open` (the LaunchAgent then starts the app through
+  LaunchServices, `open -W -g -a`).
+- **"The MunbynBLE bridge is not running"** from the CLI/web UI: run
+  `scripts/install-ble-bridge.sh`. A Preview job sent while the bridge is down
+  waits in the CUPS queue (the socket backend keeps retrying) and prints when
+  it's back.
+- **Port 9100 taken** (the log says "Cannot listen"): see who has it with
+  `lsof -nP -iTCP:9100 -sTCP:LISTEN`, or move the bridge: set
+  `"ble_bridge_port"` in the config, restart it (see above), and re-run
+  `sudo scripts/install-cups-queue.sh --ble --ble-port <N>`.
+- **Remove it:** `scripts/install-ble-bridge.sh --uninstall` and
+  `sudo scripts/install-cups-queue.sh --uninstall --ble`.
+
+### Bluetooth from Terminal without the bridge (`--ble-direct`)
+
+For a command-line tool, the permission belongs to the app it runs in --
+Terminal, iTerm2 or VS Code, not `python3` -- so the first `--ble-scan` or
+`--ble-direct` run from, say, Terminal pops the prompt for *Terminal*. Allow
+it; the grant covers everything later run from that app. To reset:
 
 ```sh
 tccutil reset BluetoothAlways com.apple.Terminal      # Terminal
 tccutil reset BluetoothAlways com.googlecode.iterm2   # iTerm2
-tccutil reset BluetoothAlways                         # every app
 ```
 
-Run it from a terminal on the Mac that is near the printer. Over SSH there is
-no app to show the prompt to, so Bluetooth is likely to be refused there
-(unverified). Bluetooth must also be switched on.
+Over SSH there is no app to show the prompt to; use the bridge. Bluetooth
+must also be switched on.
 
 ## Troubleshooting
 
@@ -359,11 +447,15 @@ no app to show the prompt to, so Bluetooth is likely to be refused there
 print_label.py             CLI entry point
 web.py                      Flask web UI (127.0.0.1:5050)
 munbyn/                     labels, tspl, render, usb_transport, config,
-                            ble_protocol (pure BLE frames), ble_transport (bleak)
+                            ble_protocol (pure BLE frames), ble_transport (bleak),
+                            tspl_parse + ble_bridge (TSPL -> Bluetooth bridge),
+                            ble_bridge_client (CLI/web side of the bridge)
 templates/, static/         web UI assets (plain HTML/JS, no build step)
 scripts/install-pdf-service.sh   builds/links the PDF-menu "app" print path
 scripts/print-from-dialog.sh     wrapper that app shells out to
-cups/, scripts/install-cups-queue.sh   native CUPS queue (separate track)
+cups/, scripts/install-cups-queue.sh   native CUPS queues: USB, and --ble (socket -> bridge)
+scripts/install-ble-bridge.sh    builds MunbynBLE.app + its LaunchAgent (the Bluetooth bridge)
+macos/munbyn-ble-launcher.c      MunbynBLE.app's executable (runs the bridge as a child)
 PLANS/PLAN.md               dated hardware facts, decisions, open items
 PLANS/BLE-PROTOCOL.md       Bluetooth protocol spec (from Munbyn's web editor)
 PLANS/BLE-IMPLEMENTATION.md Bluetooth plan and status
