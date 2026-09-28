@@ -1,0 +1,681 @@
+{
+ "scenario": "selftest_4x6",
+ "input": {
+  "bits_file": "selftest_4x6_816x1242.bits.gz",
+  "width_dots": 816,
+  "height": 1242,
+  "byte_array_len": 126684,
+  "byte_array_sha256": "de11e5895f62c1e4a7a217b4f89e46373ec5ba8b0ed185b50a45b14de7838eec"
+ },
+ "expect": {
+  "section_size": 8160,
+  "sections": 16,
+  "section_compressed_lens": [
+   1528,
+   1980,
+   1191,
+   1034,
+   1034,
+   1034,
+   1034,
+   1038,
+   1034,
+   1034,
+   1034,
+   1034,
+   1034,
+   1197,
+   1153,
+   553
+  ],
+  "section_sha256": [
+   "d331687d361da12b311e71bcc186588cadc4cd3bcc6b31886ce25e36040a1fec",
+   "cd18dbc1d5e39e8bfbeb6457b15d81931c37f6497cf375b5b84e23bc0aff9968",
+   "3f01107532a4ea0eacdc8b1b5bb278abf29daa91b94648248af294ab76cb7e18",
+   "25eee4391a0061778812a6df54d3cedadae2f65428ef9f221ad4f2c8e451c0a4",
+   "07a546e00841d565877730108141756e7f45b764e0da7da7c3017df11531a5ab",
+   "23530add7ab06e3381dcb2a9cffa85d6f408bacca4dd953df882b6cb251ffb8a",
+   "f20e6ca1775e28649d2f0847d0ccabce12cef840fc5e7a3e7880e77530b3c8c4",
+   "7fed9dd274ca7afd77b86481d5dddbe52aa1abd2375c0afb62ad328a5eb45d37",
+   "7ac0d895e4488472de2417b353027fe116248aa65a987be61cd066b4b81b707e",
+   "ed4b8e92825f45f792e15093a0e2b1325af6185a6ed6964b9d6a1c96844dd9eb",
+   "3e6943fee30d4317b861e28e7e03e6ad779a2df34e96cf00b8b8015cb005a45e",
+   "0f594dfd85e9f17f95052b3f0e7b122baca0b9bbf14d6f1127b79d49f08a0972",
+   "4d1cee001d4fdbcf03559a83b5386a59b9142a2f5372fa8250edcfdc0c9d0f6c",
+   "80ffdad0a97d9554ea95c44940e3fce9014bc1e21b805b7af43efd236bba0563",
+   "63d067731d09d1a0103fb0c7b946fdf0055a64852dad8b009cd0e5312b240d6b",
+   "95c8d34209bd0a81bfbd5de4213d2d544c722ed4695e1a32976ab7033929d6c1"
+  ],
+  "writes": 52
+ },
+ "log": [
+  {
+   "dir": "write",
+   "char": "0xABF1",
+   "event": "DEVICEINFO",
+   "len": 6,
+   "sha256": "ac2ce0f7c06b8918218a5e93a13956daa34e48cbdc0088e98d8072859403d56a",
+   "hex": "5502405d0801"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "DEVICEINFO reply",
+   "hex": "551f8030080110c8011a181a0353494d2864300838044a01306a05312e302e39800102"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 1,
+   "package": 1,
+   "of": 4,
+   "len": 433,
+   "sha256": "2ceed3a55dce2d1adae78f6eb1b6d5f1e196568cd22b291a836651f6a0a2ab6c",
+   "hex": "55ad816708042aa8030801129003000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f000f807fc003c003c003c003c003c003ffffff8032f80078007800780078007832bf0033c800cc013c013c013c011a0380004f004f80407600cbe009e009e009e0a3e009e0cbe009e009e009e0cbe009e0cbe071e009e009e0cbe009e009e0cbe009e009e009e0a3e009e0cbe009e009e009e0cbe009e0cbe0cbe009e009e0cbe0ade009e0cbe009e009e009e0cbe009e0cbe07be009e009e0cbe009e0cbe0cbe009e009e009e0a3e009e0cb600080110013e013e013e098c013e01320cbe013e013e013e0a3e013e0cbe07be013e013e0cbe013e0cbe067e013e013e013e0b7e013e0cbe013e013e013e0cbe013e0cbe07be013e013e0cbe0b7e0cbe0cbe013e013e013e0a3e013e0cbe07be013e013e0cbe013e0cbe07be013e013e013e0b7e013e0cbe013e013e013e0a318b8bb0f2004280130663810400150f0176001"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 1,
+   "package": 2,
+   "of": 4,
+   "len": 431,
+   "sha256": "bd24d9197e7d83a5f6194c167348fc9132081d3ff0e42a413ef3c7265fffe1d1"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 1,
+   "package": 3,
+   "of": 4,
+   "len": 431,
+   "sha256": "a94276155fc6ce48aec8f63a810a8378debb3a0cdb2bfb834aec04873279a23f"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 1,
+   "package": 4,
+   "of": 4,
+   "len": 359,
+   "sha256": "2f2067f5dbd222215d73679813bfc8283d1f77010b880cada50d6868dcf76908",
+   "hex": "5563416b08042ade02080112c80297c003c003c003c003c003c197c04fc003c003c003c003c003c197c003c003c003c003c003c197c003c003c003c003c003c197c197c003c003c003c003c003c197c003c003c003c003c003c197c003c001e1801fc66fe001e001e0cbe001e0cbe0cbe001e001e0cbe0cbe00171800fe80e00087c003c003c197203c09fc0239008782217827fe0bf402016001d5884038103f843f810080fc2017e80fe00ac8197c003c003c19760fc0bfe02f9008ff8201030652ff835900eb4078107fc00a9ff201ff81ff03dfc003c003c197e0106e0703816c80442c10081d826101c0e02020caf03e02ff14c20102862d113671032f80078007832f430194b9900904d2030606568f47a0178bc032b4ca0184830329cc21e0cbe001e001e0cbd1ce070383cc805826f038758261030653efc7e077cbe402400ca933c0e301957bf80a001ff80078007832b8018b8bb0f200428043810400150f0176001"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 1 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 2,
+   "package": 1,
+   "of": 5,
+   "len": 433,
+   "sha256": "2b67ebda2320363d85ad17b41ad42273292409458fffc1a0be8fb7dec3de230b"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 2,
+   "package": 2,
+   "of": 5,
+   "len": 431,
+   "sha256": "5048d97b42bdabfef6736b702b80515c36889e02ab07f00787b84d414b90837a"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 2,
+   "package": 3,
+   "of": 5,
+   "len": 431,
+   "sha256": "90efdfe4ffd52597706c6a05b07e85b1cd0fbb7017874088f70f15ce69dd5028"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 2,
+   "package": 4,
+   "of": 5,
+   "len": 431,
+   "sha256": "54212a375fe20203c1ba945161a0c4cb35c8857fbaad6f19f27fff5728f4fc47"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 2,
+   "package": 5,
+   "of": 5,
+   "len": 411,
+   "sha256": "04f39612b9d746205435b801d72e64f1d6c89affd273217053d8f1b4f1b3377b"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 2 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 3,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "e89db5e0df587798657bf7da5649afd112cd5359326abd9858b107c3f0a61f67"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 3,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "2a9cff8b9b22ad90fad5d31a9ee8f05e3774016b4ee2dc05ee9efa4647f1eb47"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 3,
+   "package": 3,
+   "of": 3,
+   "len": 422,
+   "sha256": "d4d660647c9b6a1049ef6129cb6e2ff1e3774b91dfd841e1e582f60d6dfdbd2a"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 3 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 4,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "d3d0a5bc6063bb669ce49b135f15cee49c4d6aae7d74208922d65448b6c7ba38"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 4,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "a2d43dd7656b716cfeb45829d4689d741f3f1af6de809203fd99a80028f2bd15"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 4,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "bcebcc335747456e05feba598349a47f70ecff7628f6f5f979a238c292b20b1e"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 4 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 5,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "2ebbb5ccdd4f6bcc0fa3b6e85a0c80117500bf4820c0f698a8a0f09afc3d4ed7"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 5,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "e0bce529cb00dce7da25f4df5251b842516ef7ef153c76de7f78e813f3eabdb7"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 5,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "d64ff390feff135fb0aebf6dafd7cdcc66339131360edd5c5bb0057b6b31d36d"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 5 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 6,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "2469cfe994aa10a9eb4a299ceacf8e49d1f6f37d4f79beaf10add09b72a9f0d8"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 6,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "9ee5aab9b0171462cc90483ce1ab13e104db261dd191c6ad0a4dd639aa6017ae"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 6,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "1687c3f5958678fc9b769c90ac33d136ebf66925ce9ac879a37c463605a884eb"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 6 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 7,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "27afba7aef5a993573d3d86c666bd93a2c43acdd19badef0c7cf603d401ab269"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 7,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "1a029ffda5f815a884730573872a0a241efac2cfaf1536e90e804f000391aa33"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 7,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "0d85fbcb4e0d40d46731ac8be8a5dd6f148fc8c4df0603f9e2618754d0ac6619"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 7 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 8,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "bbe8cf34540cf1379242e75962a88d00a2005d61ee6f8933c224a7d8f6fd438d"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 8,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "ba02d98e62d9c926071fafffef9ba6f598239416b07c15ad1583ccddba18399d"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 8,
+   "package": 3,
+   "of": 3,
+   "len": 269,
+   "sha256": "ca3c2db90053163e43ba6107d523a11631b7a12958f74524077a04a338fc533c"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 8 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 9,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "011b8c5aa3e0077b40d8066f1d4763727a62ccbe2ab785f2ce91dd7c4431ca69"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 9,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "9803285dd16356135b53ee98198dd1c8d5147c75e85cfa5249567626ed778b3a"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 9,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "999644ffcfe17a5e1052a79c0c83fbd46e38df3efebcf53c7bfcc385fbb3791c"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 9 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 10,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "cea25db13568352dc782cee5b04b874dc100c2c266e0f130fd681f3ef5860f15"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 10,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "2f36161024c617c51cbaf6ce2ab55eb1bf18315ec388a2403d4ff28c45b094cc"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 10,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "2f202a23e139bdc86b403523c259937743ee7e1fba0baed0397acb1d73b7d877"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 10 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 11,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "4b6a0c23e16e0e28bba2967bb5cef793fdb484146edcd0f8a7ddac8b8faa15ad"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 11,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "c84df930c9180b4f034d432d95ef6f702384cafc7e87995fad7857150d4da669"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 11,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "ac6bb08eabd1c87a2aeb443a70798ff9e02fb4671276c3cf489cbb39b11a9def"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 11 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 12,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "493478aeac5902ba7340da31592960c43b5a6a7339d37265fd61abaff3fc5059"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 12,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "d996260d2733915b584cb6e52b8219910172bb14bdfa0b110c9e1728d172c790"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 12,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "83985a3d8189831f007b9b4f5933df28613066268184b784f7eeb4313a6721f9"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 12 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 13,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "16c76f87762aa43699cca653edbf1cd5acedbe40590871494031c484c1709aff"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 13,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "ef13ede5200ecec76a240040275322cd4a02e3612d1a845cfd4c04aff137413c"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 13,
+   "package": 3,
+   "of": 3,
+   "len": 265,
+   "sha256": "49fea37a317b76183590488d98c220886656820462334cb69675e738f7e86eb0"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 13 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 14,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "e4a4d93f5210486c5fa4cf5ad894ecf05245b195f0459a6dbe5eeab62db37996"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 14,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "db6844e7cf5a15d2204efadc841fd938f3cd044546b3035eb008621554e4c597"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 14,
+   "package": 3,
+   "of": 3,
+   "len": 428,
+   "sha256": "2643c236740d42aa06755875817c952d7009d016014500948512c26ed9a1859c"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 14 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 15,
+   "package": 1,
+   "of": 3,
+   "len": 433,
+   "sha256": "4c0d0d49fc0f89e080eeab74415e29cc08dae64d860046b0799ee6289ebb2241"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 15,
+   "package": 2,
+   "of": 3,
+   "len": 431,
+   "sha256": "e1aa199dcb9ba16ffaf130c60956640333b11fb284c373b534b3bf7a07f75161"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 15,
+   "package": 3,
+   "of": 3,
+   "len": 384,
+   "sha256": "feb1f416557d03f5148a59bc7071cdfde9bcb19dba12ac23d7709ec9c2ea3ab4"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 15 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 16,
+   "package": 1,
+   "of": 2,
+   "len": 433,
+   "sha256": "0107f87463fb238b9d91bed178139883e369ef95de154cf900064eab1f870479",
+   "hex": "55ad818308042aa803080112900380700043c003e0103ff80067f007761805de001f00804c0197c003c197c197c197c003c197c003c197c197c197c003c197c003c003c197c197c003c003c197c003c197c197c197c003c197c003c197c197c197c003c197c197c003c197c197c197c003c197c003c197c197c197c003c197c003c197c197c197c003c197c197c003c197c197c197c003c197c003c197c197c197c003c197c003c003c197c197c003c003c197c003c197c197c197c003c197c003c197c197c197c003c197c197c003c197c197c197c003c197c003c197c197c197c003c197c003c197c197c197c003c197c197c003c197c197c197c003c197c003c197c197c197c003c197c003c003c197c197c003c003c197c003c197c197c197c003c197c003c197c197c197c003c197c197c003c197c197c197c003c19540dc8057c197c197c197c003c003c197c003c197c003c1d3c003c4c7c003c197c003c197c003c197c04fc003c003c003c003c003c197c003c003c003c003c003c197c003c003c003c003c003c197c197c003c003c003c003c003c197c003c018b8bb0f2002280130663810400150d2086010"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF4",
+   "event": "DEVICEPRINT",
+   "section": 16,
+   "package": 2,
+   "of": 2,
+   "len": 184,
+   "sha256": "d5d58585cb78553b2fd0e4421cee54a2d48c6549a1d892b34597f70744d01fe5",
+   "hex": "55b400de08042aaf01080112990103c003c003c003c197c003c003c003c003c003c003ccbd4003c003c003c003c003c003fe00cbe001e001e001e001e001e0cae001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001e001c018b8bb0f200228023810400150d2086010"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "section 16 ack (11/\"2\")",
+   "hex": "5509c06d08061a05080b120132"
+  },
+  {
+   "dir": "write",
+   "char": "0xABF1",
+   "event": "PRINTINEND",
+   "len": 6,
+   "sha256": "79a17b5ebb1fe9823ee5ab3b777d914d16bd93e54034b7fa9d8773cd4a8ac3a5",
+   "hex": "55024055080a"
+  },
+  {
+   "dir": "notify",
+   "char": "0xABF3",
+   "why": "page printed (10/\"0\")",
+   "hex": "5509c06d08061a05080a120130"
+  }
+ ]
+}

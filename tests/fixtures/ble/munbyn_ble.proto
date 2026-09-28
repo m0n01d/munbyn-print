@@ -1,0 +1,157 @@
+// Munbyn BLE printer protocol (RW402B/RW403B/RW405B/ST425/FM226 family).
+// Our reconstruction (munbyn-print), not Munbyn's file. Spec: PLANS/BLE-PROTOCOL.md section 4.
+//
+// Reconstructed 2026-09-27 from the google-protobuf (jspb) classes generated
+// into editor.munbyn.com's static/js/app.e3efa380.js, webpack module 53689
+// (runtime = vendors module 65339). Every field number / wire type below is
+// taken from that module's serializeBinaryToWriter / deserializeBinaryFromReader
+// (writeInt32/readInt32 -> int32, writeSint32/readSint32 -> sint32,
+// writeEnum -> enum, writeString -> string, writeBytes -> bytes,
+// writeMessage -> message).
+//
+// proto3: all setters are Message.setProto3{Int,String,Bytes,Enum}Field and the
+// writers skip default values (0 / "" / empty bytes).
+// No repeated fields, no oneofs, no maps: every constructor is
+// Message.initialize(this, e, 0, -1, null, null)  (repeatedFields = null,
+// oneofGroups = null). No package (symbols are exported as "proto.MPSendMsg").
+//
+// Field NAMES are what jspb emitted. jspb lowercases camelCase names, so the
+// original .proto may have used e.g. "eventType"; names do not affect the wire.
+// Declaration order follows the generated toObject() order (MPSendMsg declares
+// sendint(4) before sendstr(3) -- that is how the original file had it).
+syntax = "proto3";
+
+enum EventType {
+  DEFAULT = 0;
+  DEVICEINFO = 1;
+  SELFTEST = 2;
+  CLOSETIME = 3;
+  DEVICEPRINT = 4;
+  CANCELPRINTING = 5;
+  DEVICEREPORT = 6;
+  FIRMWAREUPGRADE = 7;
+  PRINTINGSPEED = 8;
+  PRINTINCONCENTRATION = 9;
+  PRINTINEND = 10;
+  PAPERTYPESET = 11;
+  FACTORYCOMMAND = 12;
+  SNSET = 13;
+  PAPERINFOSET = 14;
+}
+
+// Host -> printer envelope. Every write (both characteristics) is one
+// enpack()-framed MPSendMsg.
+message MPSendMsg {
+  EventType eventtype = 1;   // RW403B: always set
+  string eventtag = 2;       // RW403B: never set
+  sint32 sendint = 4;        // ZIGZAG. RW403B: density (PRINTINCONCENTRATION) / speed (PRINTINGSPEED) value
+  string sendstr = 3;        // RW403B: never set
+  bytes senddata = 5;        // RW403B DEVICEPRINT: a serialized MPPrintMsg (NOT an embedded message field)
+}
+
+// Printer -> host (notify characteristic), after unpack().
+message MPRespondMsg {
+  EventType eventtype = 1;
+  int32 code = 2;            // 200 = OK for SELFTEST / CANCELPRINTING / PAPERTYPESET / DEVICEPRINT
+  bytes responddata = 3;     // serialized MPDeviceInfoMsg (eventtype 1) or MPCodeMsg (eventtype 4, 6)
+  MPCodeMsg error = 4;       // embedded message (writeMessage/readMessage)
+}
+
+message MPCodeMsg {
+  int32 code = 1;
+  string info = 2;           // a decimal number in a string ("2", status bitfield, ...)
+}
+
+message MPDeviceInfoMsg {
+  string mac = 1;
+  string sn = 2;
+  string firmwarever = 3;
+  int32 paperstatus = 4;
+  int32 elec = 5;
+  int32 concentration = 6;
+  int32 speed = 7;
+  int32 papersize = 8;
+  string printstatus = 9;    // decimal string; editor does Number(s) then splits into 9 status bits (bit0 first)
+  int32 papertype = 10;
+  int32 closetime = 11;
+  int32 protocol = 12;
+  string blever = 13;
+  string mfr = 14;
+  int32 eeid = 15;
+  int32 supportfunction = 16;
+}
+
+message MPPaperTypeMsg {
+  int32 height = 1;
+  int32 offset = 2;
+}
+
+// Carried inside MPSendMsg.senddata for eventtype DEVICEPRINT.
+message MPPrintMsg {
+  int32 page = 1;            // RW403B: set (copies when numPages==1, else 1)
+  bytes imgdata = 2;         // RW403B: set (<= perSize=400 bytes of a heatshrink-compressed section)
+  sint32 datalength = 3;     // ZIGZAG. RW403B: set (uncompressed packed-bitmap byte length of the page)
+  int32 totalpackage = 4;    // RW403B: set (number of <=400-byte packets in the current section)
+  int32 indexpackage = 5;    // RW403B: set (1-based packet index within the section)
+  int32 width = 6;           // RW403B: set on packet 1 of every section, 0 (i.e. omitted) on the rest
+  int32 totalsection = 7;    // RW403B: set (number of sections in the page)
+  int32 compression = 8;     // RW403B: always 1
+  int32 lastpage = 9;        // RW403B: never set
+  sint32 sectionlength = 10; // ZIGZAG. RW403B: set (compressed byte length of the current section)
+  int32 lowmemory = 11;      // RW403B: never set
+  int32 indexsection = 12;   // RW403B: set (1-based; only for hasResendDevices = RW403B, RW405B)
+  int32 printtype = 13;      // RW403B: never set
+  int32 colortype = 14;      // RW403B: never set
+}
+
+message MPFirmwareMsg {
+  int32 crccode = 1;
+  sint32 datalength = 2;     // ZIGZAG
+  bytes bindata = 3;
+  int32 totalpackage = 4;
+  int32 indexpackage = 5;
+  int32 firmwaretype = 6;
+}
+
+message MPTestMsg {
+  int32 sensor1length = 1;
+  bytes sensor1data = 2;
+  int32 sensor2length = 3;
+  bytes sensor2data = 4;
+  int32 sensor3length = 5;
+  bytes sensor3data = 6;
+  int32 voltlength = 7;
+  bytes voltdata = 8;
+  int32 tempurelength = 9;
+  bytes tempuredata = 10;
+  int32 capdata = 11;
+}
+
+message MPSetParaMsg {
+  int32 agingcount = 1;
+  int32 aginginterval = 2;
+  int32 set_sn = 3;
+  string sn_char = 4;
+}
+
+message MPAgingAckMsg {
+  int32 agingcount = 1;
+  int32 agingdistance = 2;
+}
+
+message MPPaperInfoMsg {
+  int32 heat_num_perline = 1;
+  int32 heattime_ratio = 2;
+  int32 avg_method = 3;
+  int32 avg_num = 4;
+  int32 heat_max_pot = 5;
+  int32 heat_min_pot = 6;
+  int32 heat_max_time = 7;
+  int32 heat_min_time = 8;
+  int32 size_y = 9;
+  int32 size_w = 10;
+  int32 paper_type = 11;
+  int32 print_offset_point = 12;
+  int32 support_back = 13;
+  int32 info_type = 14;
+}

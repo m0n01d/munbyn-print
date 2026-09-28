@@ -1,0 +1,110 @@
+{
+ "summary": {
+  "scenario": "tiny16x2",
+  "perSize": 400,
+  "printSetting": {
+   "printStatus": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "paperStatus": 0,
+   "elec": 100,
+   "concentration": 8,
+   "speed": 4,
+   "paperSize": 0,
+   "firmwareVer": "SIM",
+   "mac": "",
+   "sn": "",
+   "paperType": 0,
+   "protocol": 0,
+   "bleVer": "1.0.9",
+   "canResend": true,
+   "supportSendWhenPrinting": false
+  },
+  "printingAfter": false,
+  "printEndModal": true,
+  "isIndexError": false,
+  "writes": 3
+ },
+ "pageInputs": [
+  {
+   "pageNum": 1,
+   "widthDots": 16,
+   "height": 2,
+   "sectionSize": 8192,
+   "byteArrayHex": "f00faa55",
+   "sections": [
+    "f843f55550"
+   ]
+  }
+ ],
+ "log": [
+  {
+   "t": 208,
+   "dir": "write",
+   "char": "0xABF1",
+   "api": "writeApi2",
+   "hex": "5502405d0801",
+   "eventtype": "DEVICEINFO"
+  },
+  {
+   "t": 219,
+   "dir": "notify",
+   "char": "0xABF3",
+   "hex": "551f8030080110c8011a181a0353494d2864300838044a01306a05312e302e39800102",
+   "why": "DEVICEINFO reply"
+  },
+  {
+   "t": 228,
+   "dir": "write",
+   "char": "0xABF4",
+   "api": "writeApi",
+   "hex": "551d804808042a1908011205f843f55550180820012801300238014001500a6001",
+   "eventtype": "DEVICEPRINT",
+   "print": {
+    "page": 1,
+    "compression": 1,
+    "datalength": 4,
+    "totalsection": 1,
+    "sectionlength": 5,
+    "indexsection": 1,
+    "width": 2,
+    "totalpackage": 1,
+    "indexpackage": 1,
+    "printtype": 0,
+    "colortype": 0,
+    "lastpage": 0,
+    "imgdataLen": 5
+   }
+  },
+  {
+   "t": 235,
+   "dir": "notify",
+   "char": "0xABF3",
+   "hex": "5509c06d08061a05080b120132",
+   "why": "section 1 ack (11/\"2\")"
+  },
+  {
+   "t": 239,
+   "dir": "write",
+   "char": "0xABF1",
+   "api": "writeApi2",
+   "hex": "55024055080a",
+   "eventtype": "PRINTINEND"
+  },
+  {
+   "t": 263,
+   "dir": "notify",
+   "char": "0xABF3",
+   "hex": "5509c06d08061a05080a120130",
+   "why": "page printed (10/\"0\")"
+  }
+ ]
+}
