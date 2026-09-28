@@ -2,6 +2,10 @@
 
 ## Status (2026-09-27, hardware-verified)
 
+**Preview printing works (2026-09-27, evening).** Dwight ran `sudo ./scripts/install-cups-queue.sh --feed-scale 0.981`
+(queue `Munbyn_RW403B_Native`, Resolution 203x207dpi) and printed the ShedLab page-8 100 mm bar from Preview's
+normal Print dialog at Scale 100% -- it printed. Repo pushed to private `m0n01d/munbyn-print`.
+
 **The USB/TSPL path works.** The conductor printed a real job from this
 repo's design to the real RW403B on real 4x6 gap labels: header + `CLS` +
 one `BITMAP` + `PRINT`, written to bulk OUT `0x03` of interface 0 -- it
@@ -315,7 +319,7 @@ printer, 4x6 gap labels, caliper measurements by Dwight)
   - **(B) A native arm64 CUPS filter** (raster -> TSPL) -- built and
     byte-verified against the hardware-confirmed job (see `cups/README.md`),
     as a separate track/agent (`cups/`, `scripts/install-cups-queue.sh`,
-    queue name "Munbyn RW403B (native)"). **Not yet printed on paper.** Not
+    queue name "Munbyn RW403B (native)"). **Installed and printed from Preview on 2026-09-27.** Not
     owned by this file's authors beyond linking to it from the README.
   - **(C) The PDF Services app** (`scripts/install-pdf-service.sh`) --
     rewritten as an app bundle rather than a raw script (see the struck-through
@@ -336,7 +340,7 @@ printer, 4x6 gap labels, caliper measurements by Dwight)
   shapes, `enpack()` framing, chunking/retry protocol). Real protocol work,
   not a small addition -- would need its own implementation phase and its
   own hardware verification before trusting any of it.
-- [ ] **Install the native CUPS queue** (`sudo ./scripts/install-cups-queue.sh`,
+- [x] **Install the native CUPS queue** (done 2026-09-27 with `--feed-scale 0.981`; Preview print confirmed) (`sudo ./scripts/install-cups-queue.sh`,
   a separate track/agent's work) and verify Preview's normal paper-size/
   scaling controls actually reach the printer correctly through it.
 - [ ] **Optional: printer sharing**, so the MacBook (`dwight`) could print
