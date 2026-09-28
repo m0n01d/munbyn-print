@@ -361,3 +361,12 @@ That exact set installed and imported cleanly in a scratch Python 3.9 venv on th
 
 The first useful milestone is P1 plus P2 step 0. At that point the encoder is proven against a real
 editor capture, still with no writes of our own.
+
+## Hardware verification (2026-09-28, conductor + Dwight, Mac mini, RW403B-D0C6)
+
+- P1 direct (from Terminal.app): `--status --ble` read DEVICEINFO (fw 1.1.16, BLE fw 1.2.1, density 8, speed 4); `--selftest --ble` printed upright, not mirrored, correct polarity, one label, 16 sections acked, 0 resends, 4.1 s.
+- Feed scale over BLE: ShedLab page-8 100 mm bar printed at ~100 mm with `ble_feed_scale` 0.981 (same as USB). Verified.
+- From the Claude desktop app, in-process BLE is killed by TCC (responsible process com.anthropic.claude-code has no NSBluetoothAlwaysUsageDescription). Always go through the bridge from there.
+- P3 bridge: `scripts/install-ble-bridge.sh` installed MunbynBLE.app + LaunchAgent; the prompt read "MunbynBLE would like to use Bluetooth"; after Allow, `--status --ble` and `--selftest --ble` via the bridge worked (job #2, 7.6 s).
+- Config on the Mac mini now defaults to `transport: ble`.
+- Not yet done: `sudo scripts/install-cups-queue.sh --ble` (Preview over Bluetooth) -- Dwight's call.
