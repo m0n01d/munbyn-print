@@ -369,4 +369,4 @@ editor capture, still with no writes of our own.
 - From the Claude desktop app, in-process BLE is killed by TCC (responsible process com.anthropic.claude-code has no NSBluetoothAlwaysUsageDescription). Always go through the bridge from there.
 - P3 bridge: `scripts/install-ble-bridge.sh` installed MunbynBLE.app + LaunchAgent; the prompt read "MunbynBLE would like to use Bluetooth"; after Allow, `--status --ble` and `--selftest --ble` via the bridge worked (job #2, 7.6 s).
 - Config on the Mac mini now defaults to `transport: ble`.
-- Not yet done: `sudo scripts/install-cups-queue.sh --ble` (Preview over Bluetooth) -- Dwight's call.
+- Preview over Bluetooth VERIFIED: Dwight ran `sudo ./scripts/install-cups-queue.sh --ble` (queue `Munbyn_RW403B_BLE`, socket://127.0.0.1:9100) and printed from Preview; bridge job #3 printed, printer reported 1 of 1, 7.1 s.
