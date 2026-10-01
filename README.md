@@ -5,6 +5,10 @@ involved -- **verified against the real printer** 2026-09-27 (see
 `PLANS/PLAN.md` for the dated hardware facts and decisions behind everything
 below).
 
+<img src="docs/shots/munbyn-print.png" width="600" alt="Munbyn print web UI showing a rendered 4x6 label preview">
+
+*The web UI previews a label as the printer's 1-bit bitmap (dry-run mode, nothing printed).*
+
 ## Why
 
 Munbyn ships a macOS CUPS driver, but its filter (`rastertorw403b`) is
